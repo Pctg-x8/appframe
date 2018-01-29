@@ -1,0 +1,10 @@
+[package]
+name = "appframe"
+version = "0.1.0"
+authors = ["S.Percentage <Syn.Tri.Naga@gmail.com>"]
+
+[dependencies]
+bitflags = "1.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
