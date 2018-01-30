@@ -3,6 +3,8 @@
 use libc::*;
 use objc::runtime::*;
 use std::mem::zeroed;
+use std::borrow::Cow;
+use std::mem::forget;
 
 #[link(name = "AppKit", kind = "framework")] extern {}
 
@@ -13,7 +15,7 @@ use std::mem::zeroed;
 #[cfg(not(target_pointer_width = "64"))] pub type NSInteger = i32;
 #[cfg(not(target_pointer_width = "64"))] pub type NSUInteger = u32;
 #[repr(C)] pub struct CGPoint { pub x: CGFloat, pub y: CGFloat }
-#[repr(C)] pub struct CGSize  { pub width: CGFloat, pub y: CGFloat }
+#[repr(C)] pub struct CGSize  { pub width: CGFloat, pub height: CGFloat }
 #[repr(C)] pub struct CGRect  { pub origin: CGPoint, pub size: CGSize }
 pub type NSRect = CGRect;
 
@@ -51,7 +53,7 @@ bitflags! {
     }
 }
 
-pub struct NSApplication(*mut Object);
+pub struct NSApplication(pub(crate) *mut Object);
 impl NSApplication
 {
     pub fn shared() -> Option<Self>
@@ -95,9 +97,9 @@ impl NSWindow
     {
         unsafe { msg_send![self.0, makeKeyAndOrderFront: sender] }
     }
-    pub fn set_title(&self, title: &NSString)
+    pub fn set_title<Title: CocoaString + ?Sized>(&self, title: &Title)
     {
-        unsafe { msg_send![self.0, setTitle: title.0] }
+        unsafe { msg_send![self.0, setTitle: title.to_nsstring().0] }
     }
 }
 impl Drop for NSWindow { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
@@ -118,18 +120,18 @@ impl Drop for NSMenu { fn drop(&mut self) { unsafe { msg_send![self.0, release] 
 pub struct NSMenuItem(*mut Object);
 impl NSMenuItem
 {
-    pub fn new(title: &NSString, action: Option<Sel>, key_equivalent: Option<&NSString>) -> Option<Self>
+    pub fn new<Title: CocoaString + ?Sized>(title: &Title, action: Option<Sel>, key_equivalent: Option<&NSString>) -> Option<Self>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), alloc] };
         if p.is_null() { return None; }
         let k = if let Some(k) = key_equivalent { k.clone() } else { NSString::empty().unwrap() };
-        let p: *mut Object = unsafe { msg_send![p, initWithTitle: title.0 action: action.unwrap_or(zeroed()) keyEquivalent: k.0] };
+        let p: *mut Object = unsafe { msg_send![p, initWithTitle: title.to_nsstring().0 action: action.unwrap_or(zeroed()) keyEquivalent: k.0] };
         if p.is_null() { None } else { Some(NSMenuItem(p)) }
     }
     pub fn separator() -> Option<Self>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), separatorItem] };
-        if p.is_null() { None } else { Some(NSMenuItem(p)) }
+        if p.is_null() { None } else { Some(NSMenuItem(unsafe { msg_send![p, retain] })) }
     }
 
     pub fn set_submenu(&self, sub: &NSMenu) -> &Self
@@ -144,18 +146,15 @@ impl NSMenuItem
     {
         unsafe { msg_send![self.0, setKeyEquivalentModifierMask: mods.bits] }; self
     }
-    pub fn set_key_equivalent(&self, k: &NSString) -> &Self
+    pub fn set_key_equivalent<Str: CocoaString + ?Sized>(&self, k: &Str) -> &Self
     {
-        unsafe { msg_send![self.0, setKeyEquivalent: k.0] }; self
+        unsafe { msg_send![self.0, setKeyEquivalent: k.to_nsstring().0] }; self
     }
-    pub fn set_accelerator(&self, mods: NSEventModifierFlags, key: &NSString) -> &Self
+    pub fn set_accelerator<Str: CocoaString + ?Sized>(&self, mods: NSEventModifierFlags, key: &Str) -> &Self
     {
         self.set_key_equivalent(key).set_key_equivalent_modifier_mask(mods)
     }
-    pub fn set_action(&self, sel: Sel) -> &Self
-    {
-        unsafe { msg_send![self.0, setAction: sel] }
-    }
+    pub fn set_action(&self, sel: Sel) -> &Self { unsafe { msg_send![self.0, setAction: sel] }; self }
 }
 impl Drop for NSMenuItem { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
@@ -180,6 +179,9 @@ impl NSString
         let ps: *const c_char = unsafe { msg_send![self.0, UTF8String] };
         unsafe { ::std::ffi::CStr::from_ptr(ps).to_str().unwrap() }
     }
+
+    pub(crate) fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
+    pub(crate) unsafe fn retain_id(id: *mut Object) -> Self { NSString(msg_send![id, retain]) }
 }
 impl Drop for NSString { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 impl Clone for NSString
@@ -190,6 +192,23 @@ impl Clone for NSString
         if p.is_null() { panic!("Failed retaining"); }
         NSString(p)
     }
+}
+/// Ref to NSString or Ref to str slice
+pub trait CocoaString
+{
+    fn to_nsstring(&self) -> Cow<NSString>;
+}
+impl CocoaString for NSString
+{
+    fn to_nsstring(&self) -> Cow<NSString> { Cow::Borrowed(self) }
+}
+impl CocoaString for str
+{
+    fn to_nsstring(&self) -> Cow<NSString> { Cow::Owned(NSString::new(self).unwrap()) }
+}
+impl CocoaString for String
+{
+    fn to_nsstring(&self) -> Cow<NSString> { Cow::Owned(NSString::new(self).unwrap()) }
 }
 
 macro_rules! FunTypeEncoding
