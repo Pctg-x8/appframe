@@ -9,10 +9,15 @@ extern crate libc;
 
 pub trait GUIApplicationRunner
 {
-    fn run<F: FnMut()>(appname: &str, appcode: F) -> i32;
+    fn run<E: EventDelegate>(appname: &str, delegate: &mut E) -> i32;
 }
 pub trait Window : Sized
 {
     fn new(width: u16, height: u16, caption: &str) -> Option<Self>;
     fn show(&self);
+}
+
+pub trait EventDelegate
+{
+    fn postinit(&mut self) {  }
 }

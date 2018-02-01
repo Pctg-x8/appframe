@@ -5,16 +5,16 @@ use objc::runtime::*;
 use objc::declare::*;
 use std::marker::PhantomData;
 
-struct AppDelegate<F: FnMut()>(*mut Object, PhantomData<F>);
-impl<F: FnMut()> AppDelegate<F>
+struct AppDelegate<E: ::EventDelegate>(*mut Object, PhantomData<E>);
+impl<E: ::EventDelegate> AppDelegate<E>
 {
-    fn new(callback: F, appname: &str) -> Option<Self>
+    fn new(delegate: &mut E, appname: &str) -> Option<Self>
     {
         let nsobject_class = Class::get("NSObject").expect("objc class NSObject");
         let mut classdecl = ClassDecl::new("AppDelegate", nsobject_class).expect("Beginning declaring AppDelegate");
         unsafe
         {
-            classdecl.add_ivar::<usize>("callback");
+            classdecl.add_ivar::<usize>("delegate");
             classdecl.add_ivar::<*mut Object>("appname");
             classdecl.add_method(sel!(applicationDidFinishLaunching:),
                 Self::did_finish_launching_cb as extern fn(&Object, Sel, *mut Object));
@@ -25,7 +25,7 @@ impl<F: FnMut()> AppDelegate<F>
         let this = AppDelegate(p, PhantomData);
         unsafe
         {
-            (*this.0).set_ivar("callback", Box::into_raw(Box::new(callback)) as usize);
+            (*this.0).set_ivar("delegate", delegate as *mut _ as usize);
             (*this.0).set_ivar("appname", NSString::new(appname).unwrap().leave_id());
         }
         Some(this)
@@ -36,8 +36,8 @@ impl<F: FnMut()> AppDelegate<F>
         let appname = unsafe { NSString::retain_id(*this.get_ivar("appname")) };
         Self::init_menu(&nsapp, appname.to_str());
 
-        let mut cb = unsafe { Box::<F>::from_raw(*this.get_ivar::<usize>("callback") as *mut F) };
-        cb();
+        let d = unsafe { &mut *(*this.get_ivar::<usize>("delegate") as *mut E) };
+        d.postinit();
         nsapp.activate_ignoring_other_apps();
     }
     fn init_menu(nsapp: &NSApplication, appname: &str)
@@ -72,9 +72,9 @@ impl<F: FnMut()> AppDelegate<F>
 pub struct GUIApplication;
 impl ::GUIApplicationRunner for GUIApplication
 {
-    fn run<F: FnMut()>(appname: &str, appcode: F) -> i32
+    fn run<E: ::EventDelegate>(appname: &str, delegate: &mut E) -> i32
     {
-        let appdelegate = AppDelegate::new(appcode, appname).unwrap();
+        let appdelegate = AppDelegate::new(delegate, appname).unwrap();
         let nsapp = NSApplication::shared().expect("initializing shared NSApplication");
         nsapp.set_delegate(appdelegate.0);
         nsapp.set_activation_policy(NSApplicationActivationPolicy::Regular);
