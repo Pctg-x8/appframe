@@ -115,6 +115,12 @@ impl NSMenu
     {
         unsafe { msg_send![self.0, addItem: item.0] }; self
     }
+    pub fn add_separator(&self) -> &Self
+    {
+        let sep: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), separatorItem] };
+        if sep.is_null() { panic!("Null Separator"); }
+        unsafe { msg_send![self.0, addItem: sep] }; self
+    }
 }
 impl Drop for NSMenu { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 pub struct NSMenuItem(*mut Object);
@@ -128,11 +134,11 @@ impl NSMenuItem
         let p: *mut Object = unsafe { msg_send![p, initWithTitle: title.to_nsstring().0 action: action.unwrap_or(zeroed()) keyEquivalent: k.0] };
         if p.is_null() { None } else { Some(NSMenuItem(p)) }
     }
-    pub fn separator() -> Option<Self>
+    /*pub fn separator() -> Option<Self>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), separatorItem] };
         if p.is_null() { None } else { Some(NSMenuItem(unsafe { msg_send![p, retain] })) }
-    }
+    }*/
 
     pub fn set_submenu(&self, sub: &NSMenu) -> &Self
     {
@@ -154,7 +160,7 @@ impl NSMenuItem
     {
         self.set_key_equivalent(key).set_key_equivalent_modifier_mask(mods)
     }
-    pub fn set_action(&self, sel: Sel) -> &Self { unsafe { msg_send![self.0, setAction: sel] }; self }
+    // pub fn set_action(&self, sel: Sel) -> &Self { unsafe { msg_send![self.0, setAction: sel] }; self }
 }
 impl Drop for NSMenuItem { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 

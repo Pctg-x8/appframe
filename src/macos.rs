@@ -27,10 +27,10 @@ macro_rules! DeclareObjcClass
     (#Declaring($d: expr)) => {  }
 }
 
-struct AppDelegate<E: ::EventDelegate>(*mut Object, PhantomData<E>);
-impl<E: ::EventDelegate> AppDelegate<E>
+struct AppDelegate<'d, E: ::EventDelegate + 'd>(*mut Object, PhantomData<&'d mut E>);
+impl<'d, E: ::EventDelegate + 'd> AppDelegate<'d, E>
 {
-    fn new(delegate: &mut E, appname: &str) -> Option<Self>
+    fn new(delegate: &'d mut E, appname: &str) -> Option<Self>
     {
         let class = DeclareObjcClass! { class AppDelegate : NSObject
             {
@@ -63,26 +63,21 @@ impl<E: ::EventDelegate> AppDelegate<E>
     {
         nsapp.set_main_menu(NSMenu::new().unwrap().add_item({
             NSMenuItem::new("", None, None).unwrap().set_submenu({
-                let about_menu = NSMenuItem::new(&format!("About {}", appname), None, None).unwrap();
-                let prefs = NSMenuItem::new("Preferences...", None, None).unwrap();
-                let services = NSMenuItem::new("Services", None, None).unwrap();
-                let hide = NSMenuItem::new(&format!("Hide {}", appname), None, None).unwrap();
-                let hideother = NSMenuItem::new("Hide Others", None, None).unwrap();
-                let showall = NSMenuItem::new("Show All", None, None).unwrap();
-                let quit_menu = NSMenuItem::new(&format!("Quit {}", appname), None, None).unwrap();
+                let about_menu = NSMenuItem::new(&format!("About {}", appname), Some(sel!(orderFrontStandardAboutPanel:)), None).unwrap();
+                let prefs = NSMenuItem::new("Preferences...", None, Some(&NSString::new(",").unwrap())).unwrap();
+                let services = NSMenuItem::new("Services", None, None).unwrap(); services.set_submenu(&NSMenu::new().unwrap());
+                let hide = NSMenuItem::new(&format!("Hide {}", appname), Some(sel!(hide:)), Some(&NSString::new("h").unwrap())).unwrap();
+                let hideother = NSMenuItem::new("Hide Others", Some(sel!(hideOtherApplications:)), None).unwrap();
+                let showall = NSMenuItem::new("Show All", Some(sel!(unhideAllApplications:)), None).unwrap();
+                let quit_menu = NSMenuItem::new(&format!("Quit {}", appname), Some(sel!(terminate:)), Some(&NSString::new("q").unwrap())).unwrap();
 
                 NSMenu::new().unwrap()
-                    .add_item(about_menu.set_action(sel!(orderFrontStandardAboutPanel:)))
-                    .add_item(&NSMenuItem::separator().unwrap())
-                    .add_item(prefs.set_key_equivalent(","))
-                    .add_item(&NSMenuItem::separator().unwrap())
-                    .add_item(services.set_submenu(&NSMenu::new().unwrap()))
-                    .add_item(&NSMenuItem::separator().unwrap())
-                    .add_item(hide.set_action(sel!(hide:)).set_key_equivalent("h"))
-                    .add_item(hideother.set_action(sel!(hideOtherApplications:)).set_accelerator(NSEventModifierFlags::COMMAND | NSEventModifierFlags::OPTION, "h"))
-                    .add_item(showall.set_action(sel!(unhideAllApplications:)))
-                    .add_item(&NSMenuItem::separator().unwrap())
-                    .add_item(quit_menu.set_action(sel!(terminate:)).set_key_equivalent("q"))
+                    .add_item(&about_menu).add_separator()
+                    .add_item(&prefs).add_separator()
+                    .add_item(&services).add_separator()
+                    .add_item(&hide).add_item(hideother.set_accelerator(NSEventModifierFlags::COMMAND | NSEventModifierFlags::OPTION, "h"))
+                    .add_item(&showall).add_separator()
+                    .add_item(&quit_menu)
             })
         }))
     }
