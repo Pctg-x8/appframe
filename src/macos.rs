@@ -5,21 +5,40 @@ use objc::runtime::*;
 use objc::declare::*;
 use std::marker::PhantomData;
 
+macro_rules! DeclareObjcClass
+{
+    (class $t: ident : $p: ident { $($content: tt)* }) =>
+    {{
+        let parent = Class::get(stringify!($p)).expect(concat!("objc class ", stringify!($p), "not found"));
+        let mut d = ClassDecl::new(stringify!($t), parent).expect(concat!("Beginning declaring ", stringify!($t)));
+        DeclareObjcClass!(#Declaring(d) $($content)*);
+        d.register()
+    }};
+    (#Declaring($d: expr) - $($name: ident : ($aty: ty))+ = $fr: expr; $($rest: tt)*) =>
+    {
+        unsafe { $d.add_method(sel!($($name :)+), $fr as extern fn(&Object, Sel $(, $aty)*)); }
+        DeclareObjcClass!(#Declaring($d) $($rest)*);
+    };
+    (#Declaring($d: expr) ivar $name: ident: $vt: ty; $($rest: tt)*) =>
+    {
+        $d.add_ivar::<$vt>(stringify!($name));
+        DeclareObjcClass!(#Declaring($d) $($rest)*);
+    };
+    (#Declaring($d: expr)) => {  }
+}
+
 struct AppDelegate<E: ::EventDelegate>(*mut Object, PhantomData<E>);
 impl<E: ::EventDelegate> AppDelegate<E>
 {
     fn new(delegate: &mut E, appname: &str) -> Option<Self>
     {
-        let nsobject_class = Class::get("NSObject").expect("objc class NSObject");
-        let mut classdecl = ClassDecl::new("AppDelegate", nsobject_class).expect("Beginning declaring AppDelegate");
-        unsafe
-        {
-            classdecl.add_ivar::<usize>("delegate");
-            classdecl.add_ivar::<*mut Object>("appname");
-            classdecl.add_method(sel!(applicationDidFinishLaunching:),
-                Self::did_finish_launching_cb as extern fn(&Object, Sel, *mut Object));
-        }
-        let class = classdecl.register();
+        let class = DeclareObjcClass! { class AppDelegate : NSObject
+            {
+                ivar delegate: usize;
+                ivar appname: *mut Object;
+                - applicationDidFinishLaunching:(*mut Object) = Self::did_finish_launching_cb;
+            }
+        };
         let p: *mut Object = unsafe { msg_send![class, new] };
         if p.is_null() { return None; }
         let this = AppDelegate(p, PhantomData);

@@ -19,7 +19,7 @@ use std::mem::forget;
 #[repr(C)] pub struct CGRect  { pub origin: CGPoint, pub size: CGSize }
 pub type NSRect = CGRect;
 
-#[repr(C)]
+#[repr(C)] #[allow(dead_code)]
 pub enum NSApplicationActivationPolicy { Regular, Accessory, Prohibited }
 bitflags! {
     pub struct NSWindowStyleMask: NSUInteger
@@ -138,10 +138,10 @@ impl NSMenuItem
     {
         unsafe { msg_send![self.0, setSubmenu: sub.0] }; self
     }
-    pub fn set_target(&self, target: *mut Object) -> &Self
+    /*pub fn set_target(&self, target: *mut Object) -> &Self
     {
         unsafe { msg_send![self.0, setTarget: target] }; self
-    }
+    }*/
     pub fn set_key_equivalent_modifier_mask(&self, mods: NSEventModifierFlags) -> &Self
     {
         unsafe { msg_send![self.0, setKeyEquivalentModifierMask: mods.bits] }; self
@@ -209,55 +209,4 @@ impl CocoaString for str
 impl CocoaString for String
 {
     fn to_nsstring(&self) -> Cow<NSString> { Cow::Owned(NSString::new(self).unwrap()) }
-}
-
-macro_rules! FunTypeEncoding
-{
-    (fn ($($arg: ty),*) -> $ret: ty) =>
-    {
-        format!("{r}{f}{args}",
-            r = <$ret as ObjcEncode>::encode_type(),
-            f = FunTypeEncoding!(#FrameSize(0) $($arg),*),
-            args = FunTypeEncoding!(#ArgEncode(0) $($arg),*))
-    };
-    (fn ($($arg: ty),*)) =>
-    {
-        format!("v{f}{args}",
-            f = FunTypeEncoding!(#FrameSize(0) $($arg),*),
-            args = FunTypeEncoding!(#ArgEncode(0) $($arg),*))
-    };
-    (#FrameSize($n: expr) $ty1: ty, $($type: ty),*) => { FunTypeEncoding!(#FrameSize($n + ::std::mem::size_of::<$ty1>()) $($type),*) };
-    (#FrameSize($n: expr) $ty1: ty) => { $n + ::std::mem::size_of::<$ty1>() };
-    (#ArgEncode($offs: expr) $ty1: ty, $($type: ty),*) =>
-    {
-        format!("{t}{o}{r}",
-            t = <$ty1 as ObjcEncode>::encode_type(), o = $offs,
-            r = FunTypeEncoding!(#ArgEncode($offs + ::std::mem::size_of::<$ty1>()) $($type),*))
-    };
-    (#ArgEncode($offs: expr) $ty1: ty) => { format!("{t}{o}", t = <$ty1 as ObjcEncode>::encode_type(), o = $offs) }
-}
-macro_rules! DeclareObjcClass
-{
-    (class $t: ident : $b: ident { $($content: tt)* }) =>
-    {{
-        let mut cc = ClassConstructor::begin(stringify!($t), Some(Class::require(stringify!($b)))).unwrap();
-        DeclareObjcClass!(#Construct(cc) $($content)*);
-        cc.register()
-    }};
-    (#Construct($cc: expr) protocol $t: ident; $($rest: tt)*) =>
-    {
-        $cc = $cc.add_protocol(Protocol::get(stringify!($t)).expect(concat!("Protocol `", stringify!($t), "` could not be found.")));
-        DeclareObjcClass!(#Construct($cc) $($rest)*);
-    };
-    (#Construct($cc: expr) - $selname: ident : (fn($($arg: ty),*)) = $rustfunc: expr; $($rest: tt)*) =>
-    {
-        $cc = $cc.add_method_typed(concat!(stringify!($selname), ":"), transmute($rustfunc as extern fn(Object, Selector $(, $arg)*)), &FunTypeEncoding!(fn(Object, Selector $(, $arg)*)));
-        DeclareObjcClass!(#Construct($cc) $($rest)*);
-    };
-    (#Construct($cc: expr) - $selname: ident : (fn($($arg: ty),*) -> $ret: ty) = $rustfunc: expr; $($rest: tt)*) =>
-    {
-        $cc = $cc.add_method_typed(concat!(stringify!($selname), ":"), transmute($rustfunc as extern fn(Object, Selector $(, $arg)*) -> $ret), &FunTypeEncoding!(fn(Object, Selector $(, $arg)*) -> $ret));
-        DeclareObjcClass!(#Construct($cc) $($rest)*);
-    };
-    (#Construct($_cc: expr)) => {}
 }
