@@ -105,11 +105,36 @@ impl ::GUIApplicationRunner for GUIApplication
 pub struct NativeWindow(NSWindow);
 impl ::Window for NativeWindow
 {
-    fn new(width: u16, height: u16, caption: &str) -> Option<Self>
-    {
-        let w = NSWindow::new(NSRect { origin: CGPoint { x: 0.0, y: 0.0 }, size: CGSize { width: width as _, height: height as _ } },
-            NSWindowStyleMask::TITLED | NSWindowStyleMask::CLOSABLE | NSWindowStyleMask::MINIATURIZABLE | NSWindowStyleMask::RESIZABLE);
-        w.map(|w| { w.center(); w.set_title(caption); NativeWindow(w) })
-    }
     fn show(&self) { self.0.make_key_and_order_front(NSApplication::shared().unwrap().0); }
+}
+
+pub struct NativeWindowBuilder<'c>
+{
+    style: NSWindowStyleMask, width: u16, height: u16, caption: &'c str
+}
+impl<'c> ::WindowBuilder<'c> for NativeWindowBuilder<'c>
+{
+    fn new(width: u16, height: u16, caption: &'c str) -> Self
+    {
+        NativeWindowBuilder
+        {
+            style: NSWindowStyleMask::TITLED | NSWindowStyleMask::CLOSABLE | NSWindowStyleMask::MINIATURIZABLE | NSWindowStyleMask::RESIZABLE,
+            width, height, caption
+        }
+    }
+    fn closable(&mut self, c: bool) -> &mut Self
+    {
+        if c { self.style |= NSWindowStyleMask::CLOSABLE; } else { self.style &= !NSWindowStyleMask::CLOSABLE; } self
+    }
+    fn resizable(&mut self, c: bool) -> &mut Self
+    {
+        if c { self.style |= NSWindowStyleMask::RESIZABLE } else { self.style &= !NSWindowStyleMask::RESIZABLE; } self
+    }
+
+    type WindowTy = NativeWindow;
+    fn create(&self) -> Option<NativeWindow>
+    {
+        let r = NSRect { origin: CGPoint { x: 0.0, y: 0.0 }, size: CGSize { width: self.width as _, height: self.height as _ } };
+        NSWindow::new(r, self.style).map(|w| { w.center(); w.set_title(self.caption); NativeWindow(w) })
+    }
 }

@@ -7,7 +7,9 @@ impl EventDelegate for Application
 {
     fn postinit(&mut self)
     {
-        std::mem::forget(std::mem::replace(&mut self.0, NativeWindow::new(320, 240, "appframe basic example").unwrap()));
+        let w = NativeWindowBuilder::new(640, 360, "AppFrame basic example")
+            .resizable(false).create().expect("Creating MainWindow");
+        std::mem::forget(std::mem::replace(&mut self.0, w));
         self.0.show();
     }
 }
