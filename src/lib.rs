@@ -7,6 +7,10 @@ extern crate libc;
 #[cfg(target_os = "macos")] mod macos;
 #[cfg(target_os = "macos")] pub use macos::{GUIApplication, NativeWindow, NativeWindowBuilder};
 
+#[cfg(windows)] extern crate winapi;
+#[cfg(windows)] mod win32;
+#[cfg(windows)] pub use win32::{GUIApplication, NativeWindow, NativeWindowBuilder};
+
 pub trait GUIApplicationRunner
 {
     fn run<E: EventDelegate>(appname: &str, delegate: &mut E) -> i32;
