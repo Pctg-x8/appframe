@@ -2,7 +2,7 @@ AppFrame
 ---
 
 Cross-Platform GUI Application Framework on Rust  
-For macOS
+For macOS/Windows
 
 ## Usage
 
