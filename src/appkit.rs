@@ -101,6 +101,7 @@ impl NSWindow
     {
         unsafe { msg_send![self.0, setTitle: title.to_nsstring().0] }
     }
+    pub fn view_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, contentView] } }
 }
 impl Drop for NSWindow { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 pub struct NSMenu(*mut Object);
