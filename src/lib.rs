@@ -1,6 +1,7 @@
 
 #[macro_use] extern crate bitflags;
 extern crate libc;
+#[cfg(feature = "with_ferrite")] extern crate ferrite;
 
 #[cfg(target_os = "macos")] #[macro_use] extern crate objc;
 #[cfg(target_os = "macos")] #[macro_use] mod appkit;
@@ -14,6 +15,13 @@ extern crate libc;
 pub trait GUIApplicationRunner
 {
     fn run<E: EventDelegate>(appname: &str, delegate: &mut E) -> i32;
+}
+#[cfg(feature = "with_ferrite")]
+pub trait FerriteRenderingServer
+{
+    type WindowTy;
+    fn presentation_support(&self, adapter: &ferrite::PhysicalDevice, rendered_qf: u32) -> bool;
+    fn create_surface(&self, w: &Self::WindowTy, instance: &ferrite::Instance) -> ferrite::Result<ferrite::Surface>;
 }
 pub trait Window
 {

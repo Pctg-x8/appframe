@@ -5,6 +5,8 @@ use objc::runtime::*;
 use objc::declare::*;
 use std::marker::PhantomData;
 
+#[cfg(feature = "ferrite")] use ferrite as fe;
+
 macro_rules! DeclareObjcClass
 {
     (class $t: ident : $p: ident { $($content: tt)* }) =>
@@ -94,6 +96,16 @@ impl ::GUIApplicationRunner for GUIApplication
         nsapp.set_activation_policy(NSApplicationActivationPolicy::Regular);
         nsapp.run();
         0
+    }
+}
+#[cfg(feature = "with_ferrite")]
+impl ::FerriteRenderingServer for GUIApplication
+{
+    type WindowTy = NativeWindow;
+    fn presentation_support(&self, adapter: &fe::PhysicalDevice, queue_family_index: u32) -> bool { true }
+    fn create_surface(&self, w: &NativeWindow, instance: &fe::Instance) -> fe::Result<fe::Surface>
+    {
+        fe::Surface::new_macos(instance, w.view_ptr() as *const _)
     }
 }
 
