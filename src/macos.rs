@@ -105,7 +105,7 @@ impl ::FerriteRenderingServer for GUIApplication
     fn presentation_support(&self, adapter: &fe::PhysicalDevice, queue_family_index: u32) -> bool { true }
     fn create_surface(&self, w: &NativeWindow, instance: &fe::Instance) -> fe::Result<fe::Surface>
     {
-        fe::Surface::new_macos(instance, w.view_ptr() as *const _)
+        fe::Surface::new_macos(instance, w.0.view_ptr() as *const _)
     }
 }
 

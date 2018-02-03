@@ -9,7 +9,7 @@ with_ferrite = ["ferrite"]
 [dependencies]
 bitflags = "1.0"
 libc = "0.2"
-ferrite = { git = "https://github.com/Pctg-x8/ferrite", optional = true }
+ferrite = { git = "https://github.com/Pctg-x8/ferrite", optional = true, features = ["FeImplements", "FePresentation"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
