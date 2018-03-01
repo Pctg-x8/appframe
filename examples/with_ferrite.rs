@@ -8,14 +8,15 @@ use appframe::*;
 use ferrite as fe;
 use fe::traits::*;
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::cell::{RefCell, Cell};
 use std::borrow::Cow;
 
 #[repr(C)] #[derive(Clone)] pub struct Vertex([f32; 4], [f32; 4]);
 
 struct App
 {
-    w: RefCell<Option<NativeWindow>>, ferrite: RefCell<Option<Ferrite>>, renderlayer: RefCell<Option<RenderLayer>>
+    w: RefCell<Option<NativeWindow>>, ferrite: RefCell<Option<Ferrite>>, renderlayer: RefCell<Option<RenderLayer>>,
+    dirty: Cell<bool>
 }
 pub struct Ferrite
 {
@@ -38,7 +39,7 @@ impl App
     {
         App
         {
-            w: RefCell::new(None), ferrite: RefCell::new(None), renderlayer: RefCell::new(None)
+            w: RefCell::new(None), ferrite: RefCell::new(None), renderlayer: RefCell::new(None), dirty: Cell::new(false)
         }
     }
 }
@@ -251,23 +252,29 @@ impl EventDelegate for App
             render_commands, _framebuffers: framebuffers, _renderpass: rp, _bb_views: bb_views,
             swapchain, _surface: surface
         });
+        self.dirty.set(true);
     }
     fn on_render_period(&self)
     {
-        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-        let rlr = self.renderlayer.borrow(); let rl = rlr.as_ref().unwrap();
-
-        let next_drawable = rl.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))
-            .unwrap() as usize;
-        f.queue.submit(&[fe::SubmissionBatch
+        if self.dirty.get()
         {
-            command_buffers: Cow::Borrowed(&rl.render_commands[next_drawable..next_drawable+1]),
-            wait_semaphores: Cow::Borrowed(&[(&f.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
-            signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
-        }], Some(&f.fence_command_completion)).unwrap();
-        f.queue.present(&[(&rl.swapchain, next_drawable as _)], &[&f.semaphore_command_completion]).unwrap();
-        // コマンドバッファの使用が終了したことを明示する
-        f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
+            let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
+            let rlr = self.renderlayer.borrow(); let rl = rlr.as_ref().unwrap();
+
+            let next_drawable = rl.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))
+                .unwrap() as usize;
+            f.queue.submit(&[fe::SubmissionBatch
+            {
+                command_buffers: Cow::Borrowed(&rl.render_commands[next_drawable..next_drawable+1]),
+                wait_semaphores: Cow::Borrowed(&[(&f.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
+                signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
+            }], Some(&f.fence_command_completion)).unwrap();
+            f.queue.present(&[(&rl.swapchain, next_drawable as _)], &[&f.semaphore_command_completion]).unwrap();
+            // コマンドバッファの使用が終了したことを明示する
+            f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
+
+            self.dirty.set(false);
+        }
     }
 }
 
