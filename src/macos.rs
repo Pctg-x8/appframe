@@ -336,7 +336,6 @@ impl<E: EventDelegate, S: ::FerriteRenderingServer + GUIApplicationRunner<E>> Fe
     {
         let v: objc_id = unsafe { msg_send![this, view] };
         unsafe { msg_send![v, setWantsLayer: YES] };
-        let vl: objc_id = unsafe { msg_send![v, layer] };
         let srv_weak: &Weak<S> = unsafe { retrieve_ptr(this, "server_ptr") };
         if let Some(srv) = srv_weak.upgrade() { srv.event_delegate().on_init_view::<S>(&srv, unsafe { transmute(&v) }); }
     }

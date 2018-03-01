@@ -7,8 +7,8 @@ use std::borrow::Cow;
 use std::mem::forget;
 use objc::{Encode, Encoding};
 
-#[cfg(feature = "with_ferrite")]
-type NSRunLoopMode = *mut Object;
+/*#[cfg(feature = "with_ferrite")]
+type NSRunLoopMode = *mut Object;*/
 #[cfg(feature = "with_ferrite")]
 pub enum __CVDisplayLink {}
 #[cfg(feature = "with_ferrite")]
@@ -19,14 +19,14 @@ pub type CVReturn = i32;
 pub type CVDisplayLinkOutputCallback = Option<extern "system" fn(
     link: CVDisplayLinkRef, in_now: *const CVTimeStamp, in_output_time: *const CVTimeStamp,
     in_flags: CVOptionFlags, out_flags: *mut CVOptionFlags, context: *mut c_void) -> CVReturn>;
-#[cfg(feature = "with_ferrite")] #[repr(C)]
+#[cfg(feature = "with_ferrite")] #[repr(C)] #[allow(non_snake_case)]
 pub struct CVTimeStamp
 {
     pub version: u32, pub videoTimeScale: i32, pub videoTime: i64,
     pub hostTime: u64, pub rateScalar: c_double, pub videoRefreshPeriod: i64,
     pub smpteTime: CVSMPTETime, pub flags: u64, pub reserved: u64
 }
-#[cfg(feature = "with_ferrite")] #[repr(C)]
+#[cfg(feature = "with_ferrite")] #[repr(C)] #[allow(non_snake_case)]
 pub struct CVSMPTETime
 {
     pub subframes: i16, pub subframeDivisor: i16, pub counter: u32,
@@ -44,11 +44,11 @@ pub struct CVSMPTETime
     fn CVDisplayLinkStop(link: CVDisplayLinkRef) -> CVReturn;
     fn CVDisplayLinkRelease(link: CVDisplayLinkRef);
 }
-#[cfg(feature = "with_ferrite")]
+/*#[cfg(feature = "with_ferrite")]
 #[link(name = "Foundation", kind = "framework")] extern "system"
 {
     pub static NSDefaultRunLoopMode: NSRunLoopMode;
-}
+}*/
 
 #[cfg(target_pointer_width = "64")] pub type CGFloat = f64;
 #[cfg(target_pointer_width = "64")] pub type NSInteger = i64;
@@ -164,6 +164,7 @@ impl NSWindow
         let p: *mut Object = unsafe { msg_send![p, initWithContentRect: content_rect styleMask: style_mask backing: 2 defer: YES] };
         if p.is_null() { None } else { Some(NSWindow(p)) }
     }
+    #[cfg(feature = "with_ferrite")]
     pub unsafe fn with_view_controller_ptr(vc: *mut Object) -> Option<Self>
     {
         let p: *mut Object = msg_send![Class::get("NSWindow").unwrap(), windowWithContentViewController: vc];
@@ -179,17 +180,6 @@ impl NSWindow
     {
         unsafe { msg_send![self.0, setTitle: title.to_nsstring().0] }
     }
-
-    #[cfg(feature = "with_ferrite")]
-    pub fn view_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, contentView] } }
-    pub fn view(&self) -> NSView
-    {
-        let v: *mut Object = unsafe { msg_send![self.0, contentView] };
-        NSView(unsafe { msg_send![v, retain] })
-    }
-    pub fn set_content_view(&self, view: &NSView) { unsafe { msg_send![self.0, setContentView: view.0] } }
-    pub unsafe fn set_content_view_raw(&self, view_ptr: *mut Object) { msg_send![self.0, setContentView: view_ptr] }
-    pub fn content_view_controller_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, contentViewController] } }
 }
 impl Drop for NSWindow { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 pub struct NSMenu(*mut Object);
@@ -253,14 +243,16 @@ impl NSMenuItem
 }
 impl Drop for NSMenuItem { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
-pub struct NSView(*mut Object);
+/*pub struct NSView(*mut Object);
 impl NSView
 {
     pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![self.0, setWantsLayer: flag as BOOL] } }
     pub fn set_layer(&self, layer: *mut Object) { unsafe { msg_send![self.0, setLayer: layer] } }
     pub fn layer_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, layer] } }
-}
+}*/
+#[cfg(feature = "with_ferrite")]
 pub struct CAMetalLayer(pub(crate) *mut Object);
+#[cfg(feature = "with_ferrite")]
 impl CAMetalLayer
 {
     pub fn layer() -> Option<Self>
@@ -272,6 +264,7 @@ impl CAMetalLayer
 
     pub fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
 }
+#[cfg(feature = "with_ferrite")]
 impl Drop for CAMetalLayer { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
 #[cfg(feature = "with_ferrite")]
@@ -328,6 +321,7 @@ impl NSString
         unsafe { ::std::ffi::CStr::from_ptr(ps).to_str().unwrap() }
     }
 
+    #[cfg(feature = "with_ferrite")]
     pub(crate) fn raw(&self) -> *mut Object { self.0 }
     pub(crate) fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
     pub(crate) unsafe fn retain_id(id: *mut Object) -> Self { NSString(msg_send![id, retain]) }

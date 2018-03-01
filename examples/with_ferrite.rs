@@ -18,15 +18,15 @@ struct App
 pub struct Ferrite
 {
     device: fe::Device, adapter: fe::PhysicalDevice, instance: fe::Instance,
-    gq: u32, queue: fe::Queue, fence: fe::Fence, cmdpool: fe::CommandPool,
+    gq: u32, queue: fe::Queue, cmdpool: fe::CommandPool,
     semaphore_sync_next: fe::Semaphore, semaphore_command_completion: fe::Semaphore,
     fence_command_completion: fe::Fence
 }
 pub struct RenderLayer
 {
     render_commands: Vec<fe::CommandBuffer>,
-    framebuffers: Vec<fe::Framebuffer>, renderpass: fe::RenderPass, bb_views: Vec<fe::ImageView>,
-    swapchain: fe::Swapchain, surface: fe::Surface
+    _framebuffers: Vec<fe::Framebuffer>, _renderpass: fe::RenderPass, _bb_views: Vec<fe::ImageView>,
+    swapchain: fe::Swapchain, _surface: fe::Surface
 }
 impl App
 {
@@ -59,7 +59,6 @@ impl EventDelegate for App
             semaphore_sync_next: fe::Semaphore::new(&device).unwrap(),
             semaphore_command_completion: fe::Semaphore::new(&device).unwrap(),
             cmdpool: fe::CommandPool::new(&device, gq, false, false).unwrap(),
-            fence: fe::Fence::new(&device, false).unwrap(),
             queue: device.queue(gq, 0),
             device, adapter, instance, gq
         });
@@ -90,7 +89,6 @@ impl EventDelegate for App
                 .composite_alpha(fe::CompositeAlpha::Opaque).create(&f.device).unwrap();
         // acquire_nextより前にやらないと死ぬ(get_images)
         let backbuffers = swapchain.get_images().unwrap();
-        println!("BackBuffer Count: {}", backbuffers.len());
         let isr = fe::ImageSubresourceRange
         {
             aspect_mask: fe::AspectMask::COLOR, mip_levels: 0 .. 1, array_layers: 0 .. 1
@@ -154,7 +152,7 @@ impl EventDelegate for App
         
         *self.renderlayer.borrow_mut() = Some(RenderLayer
         {
-            render_commands, framebuffers, renderpass: rp, bb_views, swapchain, surface
+            render_commands, _framebuffers: framebuffers, _renderpass: rp, _bb_views: bb_views, swapchain, _surface: surface
         });
     }
     fn on_render_period(&self)
@@ -171,6 +169,7 @@ impl EventDelegate for App
             signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
         }], Some(&f.fence_command_completion)).unwrap();
         f.queue.present(&[(&rl.swapchain, next_drawable as _)], &[&f.semaphore_command_completion]).unwrap();
+        // コマンドバッファの使用が終了したことを明示する
         f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
     }
 }
