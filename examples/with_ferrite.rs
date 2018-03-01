@@ -1,5 +1,5 @@
-#![feature(link_args)]
-#![link_args = "-rpath /Users/pctgx8/Downloads/vulkansdk-macos-1.0.69.0/macOS/Frameworks"]
+// #![feature(link_args)]
+// #![link_args = "-rpath /Users/pctgx8/Downloads/vulkansdk-macos-1.0.69.0/macOS/Frameworks"]
 
 extern crate appframe;
 extern crate ferrite;
