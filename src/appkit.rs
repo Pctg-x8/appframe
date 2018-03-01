@@ -5,8 +5,50 @@ use objc::runtime::*;
 use std::mem::zeroed;
 use std::borrow::Cow;
 use std::mem::forget;
+use objc::{Encode, Encoding};
 
+#[cfg(feature = "with_ferrite")]
+type NSRunLoopMode = *mut Object;
+#[cfg(feature = "with_ferrite")]
+pub enum __CVDisplayLink {}
+#[cfg(feature = "with_ferrite")]
+pub type CVDisplayLinkRef = *mut __CVDisplayLink;
+#[cfg(feature = "with_ferrite")]
+pub type CVReturn = i32;
+#[cfg(feature = "with_ferrite")]
+pub type CVDisplayLinkOutputCallback = Option<extern "system" fn(
+    link: CVDisplayLinkRef, in_now: *const CVTimeStamp, in_output_time: *const CVTimeStamp,
+    in_flags: CVOptionFlags, out_flags: *mut CVOptionFlags, context: *mut c_void) -> CVReturn>;
+#[cfg(feature = "with_ferrite")] #[repr(C)]
+pub struct CVTimeStamp
+{
+    pub version: u32, pub videoTimeScale: i32, pub videoTime: i64,
+    pub hostTime: u64, pub rateScalar: c_double, pub videoRefreshPeriod: i64,
+    pub smpteTime: CVSMPTETime, pub flags: u64, pub reserved: u64
+}
+#[cfg(feature = "with_ferrite")] #[repr(C)]
+pub struct CVSMPTETime
+{
+    pub subframes: i16, pub subframeDivisor: i16, pub counter: u32,
+    pub type_: u32, pub flags: u32, pub hours: i16, pub minutes: i16, pub seconds: i16, pub frames: i16
+}
+#[cfg(feature = "with_ferrite")] pub type CVOptionFlags = u64;
 #[link(name = "AppKit", kind = "framework")] extern {}
+#[cfg(feature = "with_ferrite")]
+#[link(name = "QuartzCore", kind = "framework")] extern "system"
+{
+    fn CVDisplayLinkCreateWithActiveCGDisplays(displayLinkOut: *mut CVDisplayLinkRef) -> CVReturn;
+    fn CVDisplayLinkSetOutputCallback(link: CVDisplayLinkRef, callback: CVDisplayLinkOutputCallback, userinfo: *mut c_void)
+        -> CVReturn;
+    fn CVDisplayLinkStart(link: CVDisplayLinkRef) -> CVReturn;
+    fn CVDisplayLinkStop(link: CVDisplayLinkRef) -> CVReturn;
+    fn CVDisplayLinkRelease(link: CVDisplayLinkRef);
+}
+#[cfg(feature = "with_ferrite")]
+#[link(name = "Foundation", kind = "framework")] extern "system"
+{
+    pub static NSDefaultRunLoopMode: NSRunLoopMode;
+}
 
 #[cfg(target_pointer_width = "64")] pub type CGFloat = f64;
 #[cfg(target_pointer_width = "64")] pub type NSInteger = i64;
@@ -14,10 +56,41 @@ use std::mem::forget;
 #[cfg(not(target_pointer_width = "64"))] pub type CGFloat = f32;
 #[cfg(not(target_pointer_width = "64"))] pub type NSInteger = i32;
 #[cfg(not(target_pointer_width = "64"))] pub type NSUInteger = u32;
-#[repr(C)] pub struct CGPoint { pub x: CGFloat, pub y: CGFloat }
-#[repr(C)] pub struct CGSize  { pub width: CGFloat, pub height: CGFloat }
-#[repr(C)] pub struct CGRect  { pub origin: CGPoint, pub size: CGSize }
+#[repr(C)] #[derive(Debug, Clone, PartialEq)] pub struct CGPoint { pub x: CGFloat, pub y: CGFloat }
+#[repr(C)] #[derive(Debug, Clone, PartialEq)] pub struct CGSize  { pub width: CGFloat, pub height: CGFloat }
+#[repr(C)] #[derive(Debug, Clone, PartialEq)] pub struct CGRect  { pub origin: CGPoint, pub size: CGSize }
 pub type NSRect = CGRect;
+
+unsafe impl Encode for CGPoint
+{
+    fn encode() -> Encoding
+    {
+        unsafe
+        {
+            Encoding::from_str(&format!("{{CGPoint={}{}}}", CGFloat::encode().as_str(), CGFloat::encode().as_str()))
+        }
+    }
+}
+unsafe impl Encode for CGSize
+{
+    fn encode() -> Encoding
+    {
+        unsafe
+        {
+            Encoding::from_str(&format!("{{CGSize={}{}}}", CGFloat::encode().as_str(), CGFloat::encode().as_str()))
+        }
+    }
+}
+unsafe impl Encode for CGRect
+{
+    fn encode() -> Encoding
+    {
+        unsafe
+        {
+            Encoding::from_str(&format!("{{CGRect={}{}}}", CGPoint::encode().as_str(), CGSize::encode().as_str()))
+        }
+    }
+}
 
 #[repr(C)] #[allow(dead_code)]
 pub enum NSApplicationActivationPolicy { Regular, Accessory, Prohibited }
@@ -91,6 +164,11 @@ impl NSWindow
         let p: *mut Object = unsafe { msg_send![p, initWithContentRect: content_rect styleMask: style_mask backing: 2 defer: YES] };
         if p.is_null() { None } else { Some(NSWindow(p)) }
     }
+    pub unsafe fn with_view_controller_ptr(vc: *mut Object) -> Option<Self>
+    {
+        let p: *mut Object = msg_send![Class::get("NSWindow").unwrap(), windowWithContentViewController: vc];
+        if p.is_null() { None } else { Some(NSWindow(p)) }
+    }
 
     pub fn center(&self) { unsafe { msg_send![self.0, center] } }
     pub fn make_key_and_order_front(&self, sender: *mut Object)
@@ -104,6 +182,14 @@ impl NSWindow
 
     #[cfg(feature = "with_ferrite")]
     pub fn view_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, contentView] } }
+    pub fn view(&self) -> NSView
+    {
+        let v: *mut Object = unsafe { msg_send![self.0, contentView] };
+        NSView(unsafe { msg_send![v, retain] })
+    }
+    pub fn set_content_view(&self, view: &NSView) { unsafe { msg_send![self.0, setContentView: view.0] } }
+    pub unsafe fn set_content_view_raw(&self, view_ptr: *mut Object) { msg_send![self.0, setContentView: view_ptr] }
+    pub fn content_view_controller_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, contentViewController] } }
 }
 impl Drop for NSWindow { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 pub struct NSMenu(*mut Object);
@@ -167,7 +253,60 @@ impl NSMenuItem
 }
 impl Drop for NSMenuItem { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
-pub struct NSString(*mut Object);
+pub struct NSView(*mut Object);
+impl NSView
+{
+    pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![self.0, setWantsLayer: flag as BOOL] } }
+    pub fn set_layer(&self, layer: *mut Object) { unsafe { msg_send![self.0, setLayer: layer] } }
+    pub fn layer_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, layer] } }
+}
+pub struct CAMetalLayer(pub(crate) *mut Object);
+impl CAMetalLayer
+{
+    pub fn layer() -> Option<Self>
+    {
+        let p: *mut Object = unsafe { msg_send![Class::get("CAMetalLayer").unwrap(), layer] };
+        if p.is_null() { None } else { Some(CAMetalLayer(p)) }
+    }
+    pub fn set_contents_scale(&self, scale: CGFloat) { unsafe { msg_send![self.0, setContentsScale: scale]; } }
+
+    pub fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
+}
+impl Drop for CAMetalLayer { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
+
+#[cfg(feature = "with_ferrite")]
+pub struct CVDisplayLink(CVDisplayLinkRef);
+#[cfg(feature = "with_ferrite")]
+impl CVDisplayLink
+{
+    pub fn with_active_display() -> Option<Self>
+    {
+        let mut p = unsafe { ::std::mem::uninitialized() };
+        if unsafe { CVDisplayLinkCreateWithActiveCGDisplays(&mut p) } != 0 { return None; }
+        Some(CVDisplayLink(p))
+    }
+    pub fn set_callback(&self, callback: CVDisplayLinkOutputCallback, ptr: *mut c_void)
+    {
+        unsafe { CVDisplayLinkSetOutputCallback(self.0, callback, ptr); }
+    }
+    pub fn start(&self) { unsafe { CVDisplayLinkStart(self.0); } }
+    pub fn stop(&self) { unsafe { CVDisplayLinkStop(self.0); } }
+}
+#[cfg(feature = "with_ferrite")]
+impl Drop for CVDisplayLink { fn drop(&mut self) { unsafe { CVDisplayLinkRelease(self.0) } } }
+/*pub struct NSRunLoop(*mut Object);
+impl NSRunLoop
+{
+    pub fn main() -> Option<NSRunLoop>
+    {
+        let p: *mut Object = unsafe { msg_send![Class::get("NSRunLoop").expect("NSRunLoop"), mainRunLoop] };
+        let p: *mut Object = unsafe { msg_send![p, retain] };
+        if p.is_null() { None } else { Some(NSRunLoop(p)) }
+    }
+}
+impl Drop for NSRunLoop { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }*/
+
+pub struct NSString(pub(crate) *mut Object);
 impl NSString
 {
     pub fn new(s: &str) -> Option<Self>
@@ -189,6 +328,7 @@ impl NSString
         unsafe { ::std::ffi::CStr::from_ptr(ps).to_str().unwrap() }
     }
 
+    pub(crate) fn raw(&self) -> *mut Object { self.0 }
     pub(crate) fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
     pub(crate) unsafe fn retain_id(id: *mut Object) -> Self { NSString(msg_send![id, retain]) }
 }
