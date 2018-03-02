@@ -15,7 +15,7 @@ use std::borrow::Cow;
 
 struct App
 {
-    renderlayer: RefCell<Option<RenderLayer>>, ferrite: RefCell<Option<Ferrite>>, w: RefCell<Option<NativeWindow>>,
+    renderlayer: RefCell<Option<RenderLayer>>, ferrite: RefCell<Option<Ferrite>>, w: RefCell<Option<NativeWindow<App>>>,
     dirty: Cell<bool>
 }
 pub struct Ferrite
@@ -45,7 +45,7 @@ impl App
 }
 impl EventDelegate for App
 {
-    fn postinit<S: FerriteRenderingServer + GUIApplicationRunner<Self>>(&self, server: &Rc<S>)
+    fn postinit(&self, server: &Rc<GUIApplication<Self>>)
     {
         #[cfg(target_os = "macos")] const PLATFORM_SURFACE: &str = "VK_MVK_macos_surface";
         #[cfg(windows)] const PLATFORM_SURFACE: &str = "VK_KHR_win32_surface";
@@ -83,7 +83,7 @@ impl EventDelegate for App
         *self.w.borrow_mut() = Some(w);
         self.w.borrow().as_ref().unwrap().show();
     }
-    fn on_init_view<S: FerriteRenderingServer>(&self, server: &S, surface_onto: &<S as FerriteRenderingServer>::SurfaceSource)
+    fn on_init_view(&self, server: &GUIApplication<Self>, surface_onto: &<GUIApplication<Self> as FerriteRenderingServer>::SurfaceSource)
     {
         let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
 

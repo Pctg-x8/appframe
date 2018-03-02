@@ -31,9 +31,9 @@ pub trait Window
 {
     fn show(&self);
 }
-pub trait WindowBuilder<'c> : Sized
+pub trait WindowBuilder<'c, E: EventDelegate> : Sized
 {
-    type WindowTy : Window;
+    type WindowTy: Window;
 
     fn new(width: u16, height: u16, caption: &'c str) -> Self;
     /// Set window as closable(if true passed, default) or unclosable(if false passed)
@@ -45,24 +45,23 @@ pub trait WindowBuilder<'c> : Sized
     fn create(&self) -> Option<Self::WindowTy>;
     #[cfg(feature = "with_ferrite")]
     /// Create a Renderable window
-    fn create_renderable<E, S>(&self, server: &Rc<S>) -> Option<Self::WindowTy> where
-        E: EventDelegate, S: FerriteRenderingServer + GUIApplicationRunner<E>;
+    fn create_renderable(&self, server: &Rc<GUIApplication<E>>) -> Option<Self::WindowTy>;
 }
 
 pub trait EventDelegate : Sized
 {
     #[cfg(feature = "with_ferrite")]
-    fn postinit<S: FerriteRenderingServer + GUIApplicationRunner<Self>>(&self, _server: &Rc<S>) { }
+    fn postinit(&self, _server: &Rc<GUIApplication<Self>>) { }
     #[cfg(not(feature = "with_ferrite"))]
     fn postinit(&self) { }
 
     #[cfg(feature = "with_ferrite")]
-    fn on_activated<S: FerriteRenderingServer + GUIApplicationRunner<Self>>(&self, _server: &Rc<S>) { }
+    fn on_activated(&self, _server: &Rc<GUIApplication<Self>>) { }
     #[cfg(not(feature = "with_ferrite"))]
     fn on_activated(&self) {  }
 
     #[cfg(feature = "with_ferrite")]
-    fn on_init_view<S: FerriteRenderingServer>(&self, _server: &S, _surface_onto: &<S as FerriteRenderingServer>::SurfaceSource) { }
+    fn on_init_view(&self, _server: &GUIApplication<Self>, _surface_onto: &<GUIApplication<Self> as FerriteRenderingServer>::SurfaceSource) { }
 
     #[cfg(feature = "with_ferrite")]
     fn on_render_period(&self) {}
