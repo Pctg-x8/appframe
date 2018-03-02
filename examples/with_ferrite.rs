@@ -53,7 +53,7 @@ impl EventDelegate for App
             .add_extensions(vec!["VK_KHR_surface", PLATFORM_SURFACE, "VK_EXT_debug_report"])
             .add_layer("VK_LAYER_LUNARG_standard_validation")
             .create().unwrap();
-        let adapter = instance.enumerate_physical_devices().unwrap().remove(0);
+        let adapter = instance.iter_physical_devices().unwrap().next().unwrap();
         println!("Vulkan AdapterName: {}", unsafe { std::ffi::CStr::from_ptr(adapter.properties().deviceName.as_ptr()).to_str().unwrap() });
         let memindices = adapter.memory_properties();
         let qfp = adapter.queue_family_properties();
