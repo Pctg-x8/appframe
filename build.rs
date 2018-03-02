@@ -9,4 +9,8 @@ fn main()
         println!("cargo:rustc-link-lib=framework=IOKit");
         println!("cargo:rustc-link-lib=framework=vulkan");
     }
+    else if cfg!(windows)
+    {
+        println!("cargo:rustc-link-search=static={}/Lib", env!("VK_SDK_PATH"));
+    }
 }

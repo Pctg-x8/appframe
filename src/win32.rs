@@ -22,24 +22,43 @@ use winapi::um::winuser::{
     WNDCLASSEXA as WNDCLASSEX
 };
 use winapi::um::libloaderapi::GetModuleHandleA as GetModuleHandle;
+use std::rc::*;
+use {EventDelegate, GUIApplicationRunner};
+#[cfg(feature = "with_ferrite")]
+use std::mem::transmute;
 
-pub struct GUIApplication;
-impl ::GUIApplicationRunner for GUIApplication
+#[cfg(feature = "with_ferrite")] use ferrite as fe;
+
+pub struct GUIApplication<E: EventDelegate>(Rc<E>);
+impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
 {
-    fn run<E: ::EventDelegate>(_appname: &str, delegate: &mut E) -> i32
+    fn run(_appname: &str, delegate: E) -> i32
     {
-        delegate.postinit();
+        let app = Rc::new(GUIApplication(Rc::new(delegate)));
+        #[cfg(feature = "with_ferrite")] app.0.postinit(&app);
+        #[cfg(not(feature = "with_ferrite"))] app.0.postinit();
 
         let mut msg = unsafe { uninitialized() };
         while unsafe { GetMessage(&mut msg, null_mut(), 0, 0) > 0 }
         {
-            unsafe
-            {
-                TranslateMessage(&mut msg);
-                DispatchMessage(&mut msg);
-            }
+            unsafe { TranslateMessage(&mut msg); DispatchMessage(&mut msg); }
         }
         msg.wParam as _
+    }
+    fn event_delegate(&self) -> &Rc<E> { &self.0 }
+}
+#[cfg(feature = "with_ferrite")]
+impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
+{
+    type SurfaceSource = NativeWindow;
+
+    fn presentation_support(&self, adapter: &fe::PhysicalDevice, rendered_qf: u32) -> bool
+    {
+        adapter.win32_presentation_support(rendered_qf)
+    }
+    fn create_surface(&self, w: &NativeWindow, instance: &fe::Instance) -> fe::Result<fe::Surface>
+    {
+        fe::Surface::new_win32(&instance, unsafe { GetModuleHandle(null_mut()) }, w.0)
     }
 }
 
@@ -97,6 +116,13 @@ impl<'c> ::WindowBuilder<'c> for NativeWindowBuilder<'c>
         };
         if hw.is_null() { panic!("Failed to create window: {:?}", IOError::last_os_error()); }
         Some(NativeWindow(hw))
+    }
+    #[cfg(feature = "with_ferrite")]
+    fn create_renderable<E, S>(&self, _server: &Rc<S>) -> Option<Self::WindowTy> where
+        E: EventDelegate, S: ::FerriteRenderingServer + GUIApplicationRunner<E>
+    {
+        let w = if let Some(v) = self.create() { v } else { return None; };
+        _server.event_delegate().on_init_view::<S>(&_server, unsafe { transmute(&w) }); Some(w)
     }
 }
 impl<'c> NativeWindowBuilder<'c>

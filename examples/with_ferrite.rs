@@ -15,19 +15,19 @@ use std::borrow::Cow;
 
 struct App
 {
-    w: RefCell<Option<NativeWindow>>, ferrite: RefCell<Option<Ferrite>>, renderlayer: RefCell<Option<RenderLayer>>
+    renderlayer: RefCell<Option<RenderLayer>>, ferrite: RefCell<Option<Ferrite>>, w: RefCell<Option<NativeWindow>>
 }
 pub struct Ferrite
 {
-    device: fe::Device, adapter: fe::PhysicalDevice, instance: fe::Instance,
-    device_memindex: u32, upload_memindex: u32,
     gq: u32, _tq: u32, queue: fe::Queue, tqueue: fe::Queue, cmdpool: fe::CommandPool, tcmdpool: fe::CommandPool,
     semaphore_sync_next: fe::Semaphore, semaphore_command_completion: fe::Semaphore,
-    fence_command_completion: fe::Fence
+    fence_command_completion: fe::Fence,
+    device: fe::Device, adapter: fe::PhysicalDevice, instance: fe::Instance,
+    device_memindex: u32, upload_memindex: u32,
 }
 pub struct RenderLayer
 {
-    _dmem: fe::DeviceMemory, _buf: fe::Buffer,
+    _dmem: fe::DeviceMemory, _buf: fe::Buffer, _gp: fe::Pipeline, _pl: fe::PipelineLayout,
     render_commands: Vec<fe::CommandBuffer>,
     _framebuffers: Vec<fe::Framebuffer>, _renderpass: fe::RenderPass, _bb_views: Vec<fe::ImageView>,
     swapchain: fe::Swapchain, _surface: fe::Surface
@@ -46,8 +46,10 @@ impl EventDelegate for App
 {
     fn postinit<S: FerriteRenderingServer + GUIApplicationRunner<Self>>(&self, server: &Rc<S>)
     {
+        #[cfg(target_os = "macos")] const PLATFORM_SURFACE: &str = "VK_MVK_macos_surface";
+        #[cfg(windows)] const PLATFORM_SURFACE: &str = "VK_KHR_win32_surface";
         let instance = fe::InstanceBuilder::new("appframe_integ", (0, 1, 0), "Ferrite", (0, 1, 0))
-            .add_extensions(vec!["VK_KHR_surface", "VK_MVK_macos_surface", "VK_EXT_debug_report"])
+            .add_extensions(vec!["VK_KHR_surface", PLATFORM_SURFACE, "VK_EXT_debug_report"])
             .add_layer("VK_LAYER_LUNARG_standard_validation")
             .create().unwrap();
         let adapter = instance.enumerate_physical_devices().unwrap().remove(0);
@@ -170,8 +172,9 @@ impl EventDelegate for App
             .create(&f.device).unwrap();
         let upload_buf = fe::BufferDesc::new(bufsize, fe::BufferUsage::VERTEX_BUFFER.transfer_src())
             .create(&f.device).unwrap();
-        let dmem = fe::DeviceMemory::allocate(&f.device, bufsize, f.device_memindex).unwrap();
-        let upload_mem = fe::DeviceMemory::allocate(&f.device, bufsize, f.upload_memindex).unwrap();
+        let (memreq, upload_memreq) = (buf.requirements(), upload_buf.requirements());
+        let dmem = fe::DeviceMemory::allocate(&f.device, memreq.size as _, f.device_memindex).unwrap();
+        let upload_mem = fe::DeviceMemory::allocate(&f.device, upload_memreq.size as _, f.upload_memindex).unwrap();
         buf.bind(&dmem, 0).unwrap(); upload_buf.bind(&upload_mem, 0).unwrap();
         unsafe 
         {
@@ -207,7 +210,7 @@ impl EventDelegate for App
                 .end_render_pass();
         }
         let fw = fe::Fence::new(&f.device, false).unwrap();
-        let init_commands = f.tcmdpool.alloc(1, true).unwrap();
+        let init_commands = f.cmdpool.alloc(1, true).unwrap();
         init_commands[0].begin().unwrap()
             .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 true, &[], &[], &bb_views.iter().map(|iv| fe::vk::VkImageMemoryBarrier
@@ -240,14 +243,14 @@ impl EventDelegate for App
                     dstAccessMask: fe::vk::VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
                     .. Default::default()
                 }], &[]);
-        f.tqueue.submit(&[fe::SubmissionBatch
+        f.queue.submit(&[fe::SubmissionBatch
         {
             command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
         }], Some(&fw)).unwrap(); fw.wait().unwrap();
         
         *self.renderlayer.borrow_mut() = Some(RenderLayer
         {
-            _dmem: dmem, _buf: buf,
+            _dmem: dmem, _buf: buf, _gp: gp, _pl: pl,
             render_commands, _framebuffers: framebuffers, _renderpass: rp, _bb_views: bb_views,
             swapchain, _surface: surface
         });
