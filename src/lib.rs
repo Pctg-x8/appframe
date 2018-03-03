@@ -12,6 +12,10 @@ extern crate libc;
 #[cfg(windows)] mod win32;
 #[cfg(windows)] pub use win32::{GUIApplication, NativeWindow, NativeWindowBuilder};
 
+#[cfg(feature = "with_xcb")] mod rxcb;
+#[cfg(feature = "with_xcb")] mod xcb;
+#[cfg(feature = "with_xcb")] pub use xcb::{GUIApplication, NativeWindow, NativeWindowBuilder};
+
 use std::rc::Rc;
 
 pub trait GUIApplicationRunner<E: EventDelegate>
@@ -31,10 +35,8 @@ pub trait Window
 {
     fn show(&self);
 }
-pub trait WindowBuilder<'c, E: EventDelegate> : Sized
+pub trait WindowBuilder<'c> : Sized
 {
-    type WindowTy: Window;
-
     fn new(width: u16, height: u16, caption: &'c str) -> Self;
     /// Set window as closable(if true passed, default) or unclosable(if false passed)
     fn closable(&mut self, c: bool) -> &mut Self;
@@ -42,18 +44,15 @@ pub trait WindowBuilder<'c, E: EventDelegate> : Sized
     fn resizable(&mut self, c: bool) -> &mut Self;
 
     /// Create a window
-    fn create(&self) -> Option<Self::WindowTy>;
+    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> Option<NativeWindow>;
     #[cfg(feature = "with_ferrite")]
     /// Create a Renderable window
-    fn create_renderable(&self, server: &Rc<GUIApplication<E>>) -> Option<Self::WindowTy>;
+    fn create_renderable<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> Option<NativeWindow>;
 }
 
 pub trait EventDelegate : Sized
 {
-    #[cfg(feature = "with_ferrite")]
     fn postinit(&self, _server: &Rc<GUIApplication<Self>>) { }
-    #[cfg(not(feature = "with_ferrite"))]
-    fn postinit(&self) { }
 
     #[cfg(feature = "with_ferrite")]
     fn on_activated(&self, _server: &Rc<GUIApplication<Self>>) { }

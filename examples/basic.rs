@@ -1,25 +1,26 @@
 extern crate appframe;
 
 use appframe::*;
+use std::rc::Rc;
+use std::cell::RefCell;
 
-pub struct Application(NativeWindow);
+pub struct Application(RefCell<Option<NativeWindow>>);
 impl EventDelegate for Application
 {
-    fn postinit(&mut self)
+    fn postinit(&self, srv: &Rc<GUIApplication<Self>>)
     {
         let w = NativeWindowBuilder::new(640, 360, "AppFrame basic example")
-            .resizable(false).create().expect("Creating MainWindow");
-        std::mem::forget(std::mem::replace(&mut self.0, w));
-        self.0.show();
+            .resizable(false).create(&srv).expect("Creating MainWindow");
+        *self.0.borrow_mut() = Some(w);
+        self.0.borrow().as_ref().unwrap().show();
     }
 }
 impl Application
 {
-    fn new() -> Self { Application(unsafe { std::mem::uninitialized() }) }
+    fn new() -> Self { Application(RefCell::new(None)) }
 }
 
 fn main()
 {
-    let e = GUIApplication::run("basic", &mut Application::new());
-    std::process::exit(e);
+    GUIApplication::run("basic", Application::new());
 }
