@@ -307,6 +307,10 @@ impl WindowValueList
 	{
 		self.0 |= XCB_CW_COLORMAP; self.1.colormap = c.id(); self
 	}
+	pub fn eventmask(&mut self, m: xcb_event_mask_t) -> &mut Self
+	{
+		self.0 |= XCB_CW_EVENT_MASK; self.1.event_mask = m; self
+	}
 	
 	pub fn serialize(&self) -> MallocBox<::libc::c_void>
 	{
@@ -325,6 +329,9 @@ impl Colormap
 	}
 	pub fn id(&self) -> xcb_colormap_t { self.0 }
 }
+pub use self::xcb::ffi::{
+	XCB_EVENT_MASK_EXPOSURE
+};
 
 use std::ops::{Deref, DerefMut};
 use std::fmt::{Debug, Display, Formatter, Result as FmtResult};

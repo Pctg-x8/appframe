@@ -50,6 +50,7 @@ impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
 					let e = unsafe { rxcb::ClientMessageEvent::from_ref(&e) };
 					if e.msg_type() == app.wm_protocols && e.data_as_u32() == app.wm_delete_window { break; }
 				}
+				else { println!("response: {}", e.response_type()); }
 			}
 			else
 			{
@@ -105,7 +106,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
     fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
 	{
 		let mut vlist = rxcb::WindowValueList::new();
-		vlist.back_pixel(0).border_pixel(0).colormap(&server.colormap);
+		vlist.back_pixel(0).border_pixel(0).colormap(&server.colormap).eventmask(rxcb::XCB_EVENT_MASK_EXPOSURE);
 		let mut allowed_actions = vec![
 			server.action_atoms.move_,
 			server.action_atoms.minimize,
