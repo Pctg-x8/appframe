@@ -3,6 +3,7 @@
 
 extern crate appframe;
 extern crate ferrite;
+extern crate libc;
 
 use appframe::*;
 use ferrite as fe;
@@ -23,7 +24,7 @@ pub struct Ferrite
     gq: u32, _tq: u32, queue: fe::Queue, tqueue: fe::Queue, cmdpool: fe::CommandPool, tcmdpool: fe::CommandPool,
     semaphore_sync_next: fe::Semaphore, semaphore_command_completion: fe::Semaphore,
     fence_command_completion: fe::Fence,
-    device: fe::Device, adapter: fe::PhysicalDevice, instance: fe::Instance,
+    device: fe::Device, adapter: fe::PhysicalDevice, d: fe::DebugReportCallback, instance: fe::Instance,
     device_memindex: u32, upload_memindex: u32,
 }
 pub struct RenderLayer
@@ -54,6 +55,8 @@ impl EventDelegate for App
             .add_extensions(vec!["VK_KHR_surface", PLATFORM_SURFACE, "VK_EXT_debug_report"])
             .add_layer("VK_LAYER_LUNARG_standard_validation")
             .create().unwrap();
+        let d = fe::DebugReportCallbackBuilder::new(&instance, dbg_cb).report_error().report_warning()
+            .report_performance_warning().create().unwrap();
         let adapter = instance.iter_physical_devices().unwrap().next().unwrap();
         println!("Vulkan AdapterName: {}", unsafe { std::ffi::CStr::from_ptr(adapter.properties().deviceName.as_ptr()).to_str().unwrap() });
         let memindices = adapter.memory_properties();
@@ -77,7 +80,7 @@ impl EventDelegate for App
             tcmdpool: fe::CommandPool::new(&device, tq, false, false).unwrap(),
             cmdpool: fe::CommandPool::new(&device, gq, false, false).unwrap(),
             queue: device.queue(gq, 0), tqueue: device.queue(tq, if united_queue { 1 } else { 0 }),
-            device, adapter, instance, gq, _tq: tq
+            device, adapter, instance, gq, _tq: tq, d
         });
 
         let w = NativeWindowBuilder::new(640, 360, "Ferrite integration").create_renderable(server).unwrap();
@@ -280,6 +283,13 @@ impl EventDelegate for App
             self.dirty.set(false);
         }
     }
+}
+extern "system" fn dbg_cb(_flags: fe::vk::VkDebugReportFlagsEXT, _object_type: fe::vk::VkDebugReportObjectTypeEXT,
+    _object: u64, _location: libc::size_t, _message_code: i32, _layer_prefix: *const libc::c_char,
+    message: *const libc::c_char, _user_data: *mut libc::c_void) -> fe::vk::VkBool32
+{
+    println!("dbg_cb: {}", unsafe { std::ffi::CStr::from_ptr(message).to_str().unwrap() });
+    false as _
 }
 
 fn main() { std::process::exit(GUIApplication::run("Ferrite integration demo", App::new())); }
