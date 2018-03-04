@@ -189,6 +189,7 @@ impl ClientMessageEvent
 	pub fn msg_type(&self) -> xcb_atom_t { self.0.type_ }
 	pub fn data_as_u32(&self) -> u32 { unsafe { *(self.0.data.data.as_ptr() as *const u32) } }
 }
+pub struct ExposeEvent(MallocBox<xcb_expose_event_t>);
 pub struct GenericError(MallocBox<xcb_generic_error_t>);
 impl GenericError
 {
@@ -222,6 +223,11 @@ impl Event for ClientMessageEvent
 {
 	const RESPONSE_ENUM: u8 = XCB_CLIENT_MESSAGE;
 	unsafe fn from_ref(g: &GenericEvent) -> &Self { transmute(g) }
+}
+impl Event for ExposeEvent
+{
+	const RESPONSE_ENUM: u8 = XCB_EXPOSE;
+	unsafe fn from_ref(g: &GenericEvent) -> &Self { transmute(g) }	
 }
 impl Event for GenericError
 {

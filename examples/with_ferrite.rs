@@ -9,37 +9,74 @@ use appframe::*;
 use ferrite as fe;
 use fe::traits::*;
 use std::rc::Rc;
-use std::cell::{RefCell, Cell};
+use std::cell::RefCell;
 use std::borrow::Cow;
 
 #[repr(C)] #[derive(Clone)] pub struct Vertex([f32; 4], [f32; 4]);
 
+struct ShaderStore
+{
+    v_pass: fe::ShaderModule, f_phong: fe::ShaderModule
+}
+impl ShaderStore
+{
+    fn load(device: &fe::Device) -> Result<Self, Box<std::error::Error>>
+    {
+        Ok(ShaderStore
+        {
+            v_pass: fe::ShaderModule::from_file(device, "shaders/pass.vso")?,
+            f_phong: fe::ShaderModule::from_file(device, "shaders/phong.fso")?
+        })
+    }
+}
+const VBIND: &[fe::vk::VkVertexInputBindingDescription] = &[
+    fe::vk::VkVertexInputBindingDescription
+    {
+        binding: 0, stride: 16 * 2, inputRate: fe::vk::VK_VERTEX_INPUT_RATE_VERTEX
+    }
+];
+const VATTRS: &[fe::vk::VkVertexInputAttributeDescription] = &[
+    fe::vk::VkVertexInputAttributeDescription
+    {
+        binding: 0, location: 0, offset: 0, format: fe::vk::VK_FORMAT_R32G32B32A32_SFLOAT
+    },
+    fe::vk::VkVertexInputAttributeDescription
+    {
+        binding: 0, location: 1, offset: 16, format: fe::vk::VK_FORMAT_R32G32B32A32_SFLOAT
+    }
+];
+
 struct App
 {
-    renderlayer: RefCell<Option<RenderLayer>>, ferrite: RefCell<Option<Ferrite>>, w: RefCell<Option<NativeWindow<App>>>
+    rcmds: RefCell<Option<RenderCommands>>,
+    rtdres: RefCell<Option<RenderTargetDependentResources>>,
+    rendertargets: RefCell<Option<WindowRenderTargets>>,
+    surface: RefCell<Option<fe::Surface>>,
+    res: RefCell<Option<Resources>>,
+    ferrite: RefCell<Option<Ferrite>>,
+    w: RefCell<Option<NativeWindow<App>>>
 }
 pub struct Ferrite
 {
     gq: u32, _tq: u32, queue: fe::Queue, tqueue: fe::Queue, cmdpool: fe::CommandPool, tcmdpool: fe::CommandPool,
     semaphore_sync_next: fe::Semaphore, semaphore_command_completion: fe::Semaphore,
     fence_command_completion: fe::Fence,
-    device: fe::Device, adapter: fe::PhysicalDevice, _d: fe::DebugReportCallback, instance: fe::Instance,
-    device_memindex: u32, upload_memindex: u32,
+    device: fe::Device, adapter: fe::PhysicalDevice, _d: fe::DebugReportCallback, instance: fe::Instance
 }
-pub struct RenderLayer
+pub struct Resources
 {
-    _dmem: fe::DeviceMemory, _buf: fe::Buffer, _gp: fe::Pipeline, _pl: fe::PipelineLayout,
-    render_commands: Vec<fe::CommandBuffer>,
-    _framebuffers: Vec<fe::Framebuffer>, _renderpass: fe::RenderPass, _bb_views: Vec<fe::ImageView>,
-    swapchain: fe::Swapchain, _surface: fe::Surface
+    buf: fe::Buffer, _dmem: fe::DeviceMemory, pl: fe::PipelineLayout, shaders: ShaderStore
 }
+pub struct RenderCommands(Vec<fe::CommandBuffer>);
 impl App
 {
     fn new() -> Self
     {
         App
         {
-            w: RefCell::new(None), ferrite: RefCell::new(None), renderlayer: RefCell::new(None)
+            w: RefCell::new(None), ferrite: RefCell::new(None),
+            rcmds: RefCell::new(None), surface: RefCell::new(None), rendertargets: RefCell::new(None),
+            res: RefCell::new(None), rtdres: RefCell::new(None)
         }
     }
 }
@@ -47,6 +84,14 @@ impl EventDelegate for App
 {
     fn postinit(&self, server: &Rc<GUIApplication<Self>>)
     {
+        extern "system" fn dbg_cb(_flags: fe::vk::VkDebugReportFlagsEXT, _object_type: fe::vk::VkDebugReportObjectTypeEXT,
+            _object: u64, _location: libc::size_t, _message_code: i32, _layer_prefix: *const libc::c_char,
+            message: *const libc::c_char, _user_data: *mut libc::c_void) -> fe::vk::VkBool32
+        {
+            println!("dbg_cb: {}", unsafe { std::ffi::CStr::from_ptr(message).to_str().unwrap() });
+            false as _
+        }
+
         #[cfg(target_os = "macos")] const PLATFORM_SURFACE: &str = "VK_MVK_macos_surface";
         #[cfg(windows)] const PLATFORM_SURFACE: &str = "VK_KHR_win32_surface";
         #[cfg(feature = "with_xcb")] const PLATFORM_SURFACE: &str = "VK_KHR_xcb_surface";
@@ -69,16 +114,71 @@ impl EventDelegate for App
         let device = fe::DeviceBuilder::new(&adapter)
             .add_extensions(vec!["VK_KHR_swapchain"]).add_queues(qs)
             .create().unwrap();
+        let queue = device.queue(gq, 0);
+        let cmdpool = fe::CommandPool::new(&device, gq, false, false).unwrap();
+        let device_memindex = memindices.find_device_local_index().unwrap();
+        let upload_memindex = memindices.find_host_visible_index().unwrap();
+        
+        let bufsize = std::mem::size_of::<Vertex>() * 3;
+        let buf = fe::BufferDesc::new(bufsize, fe::BufferUsage::VERTEX_BUFFER.transfer_dest()).create(&device).unwrap();
+        let memreq = buf.requirements();
+        let dmem = fe::DeviceMemory::allocate(&device, memreq.size as _, device_memindex).unwrap();
+        {
+            let upload_buf = fe::BufferDesc::new(bufsize, fe::BufferUsage::VERTEX_BUFFER.transfer_src()).create(&device)
+                .unwrap();
+            let upload_memreq = upload_buf.requirements();
+            let upload_mem = fe::DeviceMemory::allocate(&device, upload_memreq.size as _, upload_memindex).unwrap();
+            buf.bind(&dmem, 0).unwrap(); upload_buf.bind(&upload_mem, 0).unwrap();
+            unsafe 
+            {
+                upload_mem.map(0 .. bufsize).unwrap().slice_mut(0, 3).clone_from_slice(&[
+                    Vertex([0.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]),
+                    Vertex([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]),
+                    Vertex([1.0, 1.0, 0.0, 1.0], [0.5, 0.0, 1.0, 0.0])
+                ]);
+            }
+            let fw = fe::Fence::new(&device, false).unwrap();
+            let init_commands = cmdpool.alloc(1, true).unwrap();
+            init_commands[0].begin().unwrap()
+                .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::TRANSFER, true,
+                    &[], &[fe::vk::VkBufferMemoryBarrier
+                    {
+                        buffer: buf.native_ptr(), offset: 0, size: bufsize as _,
+                        srcAccessMask: 0, dstAccessMask: fe::vk::VK_ACCESS_TRANSFER_WRITE_BIT,
+                        .. Default::default()
+                    }, fe::vk::VkBufferMemoryBarrier
+                    {
+                        buffer: upload_buf.native_ptr(), offset: 0, size: bufsize as _,
+                        srcAccessMask: 0, dstAccessMask: fe::vk::VK_ACCESS_TRANSFER_READ_BIT,
+                        .. Default::default()
+                    }], &[])
+                .copy_buffer(&upload_buf, &buf, &[fe::vk::VkBufferCopy { srcOffset: 0, dstOffset: 0, size: bufsize as _ }])
+                .pipeline_barrier(fe::PipelineStageFlags::TRANSFER, fe::PipelineStageFlags::VERTEX_INPUT, true,
+                    &[], &[fe::vk::VkBufferMemoryBarrier
+                    {
+                        buffer: buf.native_ptr(), offset: 0, size: bufsize as _,
+                        srcAccessMask: fe::vk::VK_ACCESS_TRANSFER_WRITE_BIT,
+                        dstAccessMask: fe::vk::VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+                        .. Default::default()
+                    }], &[]);
+            queue.submit(&[fe::SubmissionBatch
+            {
+                command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
+            }], Some(&fw)).unwrap(); fw.wait().unwrap();
+        }
+        *self.res.borrow_mut() = Some(Resources
+        {
+            shaders: ShaderStore::load(&device).unwrap(),
+            pl: fe::PipelineLayout::new(&device, &[], &[]).unwrap(), buf, _dmem: dmem
+        });
+
         *self.ferrite.borrow_mut() = Some(Ferrite
         {
-            device_memindex: memindices.find_device_local_index().unwrap(),
-            upload_memindex: memindices.find_host_visible_index().unwrap(),
             fence_command_completion: fe::Fence::new(&device, false).unwrap(),
             semaphore_sync_next: fe::Semaphore::new(&device).unwrap(),
             semaphore_command_completion: fe::Semaphore::new(&device).unwrap(),
             tcmdpool: fe::CommandPool::new(&device, tq, false, false).unwrap(),
-            cmdpool: fe::CommandPool::new(&device, gq, false, false).unwrap(),
-            queue: device.queue(gq, 0), tqueue: device.queue(tq, if united_queue { 1 } else { 0 }),
+            cmdpool, queue, tqueue: device.queue(tq, if united_queue { 1 } else { 0 }),
             device, adapter, instance, gq, _tq: tq, _d: d
         });
 
@@ -93,28 +193,64 @@ impl EventDelegate for App
         if !server.presentation_support(&f.adapter, f.gq) { panic!("Vulkan Rendering is not supported by platform"); }
         let surface = server.create_surface(surface_onto, &f.instance).unwrap();
         if !f.adapter.surface_support(f.gq, &surface).unwrap() { panic!("Vulkan Rendering is not supported to this surface"); }
-        let surface_caps = f.adapter.surface_capabilities(&surface).unwrap();
-        let surface_format = f.adapter.surface_formats(&surface).unwrap().into_iter()
+        *self.surface.borrow_mut() = Some(surface);
+        let rtvs = self.init_swapchains().unwrap();
+        *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device,
+            self.res.borrow().as_ref().unwrap(), &rtvs).unwrap());
+        *self.rendertargets.borrow_mut() = Some(rtvs);
+        *self.rcmds.borrow_mut() = Some(self.populate_render_commands().unwrap());
+    }
+    fn on_render_period(&self)
+    {
+        if let Err(e) = self.render()
+        {
+            if e.0 == fe::vk::VK_ERROR_OUT_OF_DATE_KHR
+            {
+                // Require to recreate resources
+                let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
+                let resr = self.res.borrow(); let res = resr.as_ref().unwrap();
+
+                f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
+                *self.rcmds.borrow_mut() = None;
+                *self.rtdres.borrow_mut() = None;
+                *self.rendertargets.borrow_mut() = None;
+                *self.rendertargets.borrow_mut() = Some(self.init_swapchains().unwrap());
+                *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device, res,
+                    self.rendertargets.borrow().as_ref().unwrap()).unwrap());
+                *self.rcmds.borrow_mut() = Some(self.populate_render_commands().unwrap());
+            }
+            else { let e: fe::Result<()> = Err(e); e.unwrap(); }
+        }
+    }
+}
+impl App
+{
+    fn init_swapchains(&self) -> fe::Result<WindowRenderTargets>
+    {
+        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
+        let sr = self.surface.borrow(); let s = sr.as_ref().unwrap();
+
+        let surface_caps = f.adapter.surface_capabilities(s)?;
+        let surface_format = f.adapter.surface_formats(s)?.into_iter()
             .find(|f| fe::FormatQuery(f.format).eq_bit_width(32).has_components(fe::FormatComponents::RGBA).has_element_of(fe::ElementType::UNORM).passed()).unwrap();
-        let surface_pm = f.adapter.surface_present_modes(&surface).unwrap().remove(0);
+        let surface_pm = f.adapter.surface_present_modes(s)?.remove(0);
         let surface_size = match surface_caps.currentExtent
         {
             fe::vk::VkExtent2D { width: 0xffff_ffff, height: 0xffff_ffff } => fe::Extent2D(640, 360),
             fe::vk::VkExtent2D { width, height } => fe::Extent2D(width, height)
         };
-        let swapchain = fe::SwapchainBuilder::new(&surface, surface_caps.minImageCount.max(2),
+        let swapchain = fe::SwapchainBuilder::new(s, surface_caps.minImageCount.max(2),
             surface_format.clone(), surface_size.clone(), fe::ImageUsage::COLOR_ATTACHMENT)
                 .present_mode(surface_pm).pre_transform(fe::SurfaceTransform::Identity)
-                .composite_alpha(fe::CompositeAlpha::Opaque).create(&f.device).unwrap();
+                .composite_alpha(fe::CompositeAlpha::Opaque).create(&f.device)?;
         // acquire_nextより前にやらないと死ぬ(get_images)
-        let backbuffers = swapchain.get_images().unwrap();
+        let backbuffers = swapchain.get_images()?;
         let isr = fe::ImageSubresourceRange
         {
             aspect_mask: fe::AspectMask::COLOR, mip_levels: 0 .. 1, array_layers: 0 .. 1
         };
-        let bb_views = backbuffers.iter()
-            .map(|i| i.create_view(None, None, &fe::ComponentMapping::default(), &isr))
-            .collect::<fe::Result<Vec<_>>>().unwrap();
+        let bb_views = backbuffers.iter().map(|i| i.create_view(None, None, &fe::ComponentMapping::default(), &isr))
+            .collect::<fe::Result<Vec<_>>>()?;
 
         let rp = fe::RenderPassBuilder::new()
             .add_attachment(fe::vk::VkAttachmentDescription
@@ -128,91 +264,8 @@ impl EventDelegate for App
             .add_subpass(fe::SubpassDescription::new().add_color_output(0, fe::ImageLayout::ColorAttachmentOpt, None))
             .create(&f.device).unwrap();
         let framebuffers = bb_views.iter().map(|iv| fe::Framebuffer::new(&rp, &[iv], &surface_size, 1))
-            .collect::<fe::Result<Vec<_>>>().unwrap();
-        
-        let vsh = fe::ShaderModule::from_file(&f.device, "shaders/pass.vso").unwrap();
-        let fsh = fe::ShaderModule::from_file(&f.device, "shaders/phong.fso").unwrap();
-        let vbind = vec![
-            fe::vk::VkVertexInputBindingDescription
-            {
-                binding: 0, stride: 16 * 2, inputRate: fe::vk::VK_VERTEX_INPUT_RATE_VERTEX
-            }
-        ];
-        let vattrs = vec![
-            fe::vk::VkVertexInputAttributeDescription
-            {
-                binding: 0, location: 0, offset: 0, format: fe::vk::VK_FORMAT_R32G32B32A32_SFLOAT
-            },
-            fe::vk::VkVertexInputAttributeDescription
-            {
-                binding: 0, location: 1, offset: 16, format: fe::vk::VK_FORMAT_R32G32B32A32_SFLOAT
-            }
-        ];
-        let pl = fe::PipelineLayout::new(&f.device, &[], &[]).unwrap();
-        let vp = fe::vk::VkViewport
-        {
-            x: 0.0, y: 0.0, width: surface_size.0 as _, height: surface_size.1 as _,
-            minDepth: 0.0, maxDepth: 1.0
-        };
-        let scis = fe::vk::VkRect2D
-        {
-            offset: fe::vk::VkOffset2D { x: 0, y: 0 },
-            extent: fe::vk::VkExtent2D { width: vp.width as _, height: vp.height as _ }
-        };
-        let gp = fe::GraphicsPipelineBuilder::new(&pl, (&rp, 0))
-            .vertex_processing(fe::PipelineShader::new(&vsh, "main", None), vbind, vattrs)
-            .fragment_shader(fe::PipelineShader::new(&fsh, "main", None))
-            .primitive_topology(fe::vk::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false)
-            .fixed_viewport_scissors(fe::DynamicArrayState::Static(vec![vp]), fe::DynamicArrayState::Static(vec![scis]))
-            .rasterization_samples(1, vec![])
-            .add_attachment_blend(fe::vk::VkPipelineColorBlendAttachmentState
-            {
-                colorWriteMask: fe::vk::VK_COLOR_COMPONENT_A_BIT | fe::vk::VK_COLOR_COMPONENT_B_BIT |
-                    fe::vk::VK_COLOR_COMPONENT_G_BIT | fe::vk::VK_COLOR_COMPONENT_R_BIT, .. Default::default()
-            }).create(&f.device, None).unwrap();
-        
-        let bufsize = std::mem::size_of::<Vertex>() * 3;
-        let buf = fe::BufferDesc::new(bufsize, fe::BufferUsage::VERTEX_BUFFER.transfer_dest())
-            .create(&f.device).unwrap();
-        let upload_buf = fe::BufferDesc::new(bufsize, fe::BufferUsage::VERTEX_BUFFER.transfer_src())
-            .create(&f.device).unwrap();
-        let (memreq, upload_memreq) = (buf.requirements(), upload_buf.requirements());
-        let dmem = fe::DeviceMemory::allocate(&f.device, memreq.size as _, f.device_memindex).unwrap();
-        let upload_mem = fe::DeviceMemory::allocate(&f.device, upload_memreq.size as _, f.upload_memindex).unwrap();
-        buf.bind(&dmem, 0).unwrap(); upload_buf.bind(&upload_mem, 0).unwrap();
-        unsafe 
-        {
-            upload_mem.map(0 .. bufsize).unwrap().slice_mut(0, 3).clone_from_slice(&[
-                Vertex([0.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]),
-                Vertex([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0]),
-                Vertex([1.0, 1.0, 0.0, 1.0], [0.5, 0.0, 1.0, 0.0])
-            ]);
-        }
-        
-        let render_commands = f.cmdpool.alloc(framebuffers.len() as _, true).unwrap();
-        for ((c, fb), iv) in render_commands.iter().zip(&framebuffers).zip(&bb_views)
-        {
-            c.begin().unwrap()
-                .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    true, &[], &[], &[fe::vk::VkImageMemoryBarrier
-                    {
-                        image: fe::VkHandle::native_ptr(&**iv), subresourceRange: fe::vk::VkImageSubresourceRange
-                        {
-                            aspectMask: fe::vk::VK_IMAGE_ASPECT_COLOR_BIT, .. Default::default()
-                        },
-                        oldLayout: fe::ImageLayout::PresentSrc as _, newLayout: fe::ImageLayout::ColorAttachmentOpt as _,
-                        srcAccessMask: fe::vk::VK_ACCESS_MEMORY_READ_BIT, dstAccessMask: fe::vk::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                        .. Default::default()
-                    }])
-                .begin_render_pass(&rp, fb, fe::vk::VkRect2D
-                {
-                    offset: fe::vk::VkOffset2D { x: 0, y: 0 },
-                    extent: fe::vk::VkExtent2D { width: surface_size.0, height: surface_size.1 }
-                }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 1.0])], true)
-                    .bind_graphics_pipeline(&gp, &pl)
-                    .bind_vertex_buffers(0, &[(&buf, 0)]).draw(3, 1, 0, 0)
-                .end_render_pass();
-        }
+            .collect::<fe::Result<Vec<_>>>()?;
+
         let fw = fe::Fence::new(&f.device, false).unwrap();
         let init_commands = f.cmdpool.alloc(1, true).unwrap();
         init_commands[0].begin().unwrap()
@@ -225,64 +278,102 @@ impl EventDelegate for App
                     },
                     oldLayout: fe::ImageLayout::Undefined as _, newLayout: fe::ImageLayout::PresentSrc as _,
                     dstAccessMask: fe::vk::VK_ACCESS_MEMORY_READ_BIT, .. Default::default()
-                }).collect::<Vec<_>>())
-            .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::TRANSFER, true,
-                &[], &[fe::vk::VkBufferMemoryBarrier
-                {
-                    buffer: buf.native_ptr(), offset: 0, size: bufsize as _,
-                    srcAccessMask: 0, dstAccessMask: fe::vk::VK_ACCESS_TRANSFER_WRITE_BIT,
-                    .. Default::default()
-                }, fe::vk::VkBufferMemoryBarrier
-                {
-                    buffer: upload_buf.native_ptr(), offset: 0, size: bufsize as _,
-                    srcAccessMask: 0, dstAccessMask: fe::vk::VK_ACCESS_TRANSFER_READ_BIT,
-                    .. Default::default()
-                }], &[])
-            .copy_buffer(&upload_buf, &buf, &[fe::vk::VkBufferCopy { srcOffset: 0, dstOffset: 0, size: bufsize as _ }])
-            .pipeline_barrier(fe::PipelineStageFlags::TRANSFER, fe::PipelineStageFlags::VERTEX_INPUT, true,
-                &[], &[fe::vk::VkBufferMemoryBarrier
-                {
-                    buffer: buf.native_ptr(), offset: 0, size: bufsize as _,
-                    srcAccessMask: fe::vk::VK_ACCESS_TRANSFER_WRITE_BIT,
-                    dstAccessMask: fe::vk::VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
-                    .. Default::default()
-                }], &[]);
+                }).collect::<Vec<_>>());
         f.queue.submit(&[fe::SubmissionBatch
         {
             command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
         }], Some(&fw)).unwrap(); fw.wait().unwrap();
         
-        *self.renderlayer.borrow_mut() = Some(RenderLayer
-        {
-            _dmem: dmem, _buf: buf, _gp: gp, _pl: pl,
-            render_commands, _framebuffers: framebuffers, _renderpass: rp, _bb_views: bb_views,
-            swapchain, _surface: surface
-        });
+        Ok(WindowRenderTargets { swapchain, backbuffers: bb_views, framebuffers, renderpass: rp, size: surface_size })
     }
-    fn on_render_period(&self)
+    fn populate_render_commands(&self) -> fe::Result<RenderCommands>
     {
         let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-        let rlr = self.renderlayer.borrow(); let rl = rlr.as_ref().unwrap();
+        let rtvr = self.rendertargets.borrow(); let rtvs = rtvr.as_ref().unwrap();
+        let resr = self.res.borrow(); let res = resr.as_ref().unwrap();
+        let rdsr = self.rtdres.borrow(); let rds = rdsr.as_ref().unwrap();
 
-        let next_drawable = rl.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))
-            .unwrap() as usize;
+        let render_commands = f.cmdpool.alloc(rtvs.framebuffers.len() as _, true)?;
+        for ((c, fb), iv) in render_commands.iter().zip(&rtvs.framebuffers).zip(&rtvs.backbuffers)
+        {
+            c.begin()?
+                .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    true, &[], &[], &[fe::vk::VkImageMemoryBarrier
+                    {
+                        image: fe::VkHandle::native_ptr(&**iv), subresourceRange: fe::vk::VkImageSubresourceRange
+                        {
+                            aspectMask: fe::vk::VK_IMAGE_ASPECT_COLOR_BIT, .. Default::default()
+                        },
+                        oldLayout: fe::ImageLayout::PresentSrc as _, newLayout: fe::ImageLayout::ColorAttachmentOpt as _,
+                        srcAccessMask: fe::vk::VK_ACCESS_MEMORY_READ_BIT, dstAccessMask: fe::vk::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        .. Default::default()
+                    }])
+                .begin_render_pass(&rtvs.renderpass, fb, fe::vk::VkRect2D
+                {
+                    offset: fe::vk::VkOffset2D { x: 0, y: 0 },
+                    extent: fe::vk::VkExtent2D { width: rtvs.size.0, height: rtvs.size.1 }
+                }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 1.0])], true)
+                    .bind_graphics_pipeline(&rds.gp, &res.pl)
+                    .bind_vertex_buffers(0, &[(&res.buf, 0)]).draw(3, 1, 0, 0)
+                .end_render_pass();
+        }
+        Ok(RenderCommands(render_commands))
+    }
+    fn render(&self) -> fe::Result<()>
+    {
+        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
+        let rcmdsr = self.rcmds.borrow(); let rcmds = rcmdsr.as_ref().unwrap();
+        let rtvr = self.rendertargets.borrow(); let rtvs = rtvr.as_ref().unwrap();
+
+        let next = rtvs.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))?
+            as usize;
         f.queue.submit(&[fe::SubmissionBatch
         {
-            command_buffers: Cow::Borrowed(&rl.render_commands[next_drawable..next_drawable+1]),
+            command_buffers: Cow::Borrowed(&rcmds.0[next..next+1]),
             wait_semaphores: Cow::Borrowed(&[(&f.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
             signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
-        }], Some(&f.fence_command_completion)).unwrap();
-        f.queue.present(&[(&rl.swapchain, next_drawable as _)], &[&f.semaphore_command_completion]).unwrap();
+        }], Some(&f.fence_command_completion))?;
+        f.queue.present(&[(&rtvs.swapchain, next as _)], &[&f.semaphore_command_completion])?;
         // コマンドバッファの使用が終了したことを明示する
-        f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
+        f.fence_command_completion.wait()?; f.fence_command_completion.reset()?; Ok(())
     }
 }
-extern "system" fn dbg_cb(_flags: fe::vk::VkDebugReportFlagsEXT, _object_type: fe::vk::VkDebugReportObjectTypeEXT,
-    _object: u64, _location: libc::size_t, _message_code: i32, _layer_prefix: *const libc::c_char,
-    message: *const libc::c_char, _user_data: *mut libc::c_void) -> fe::vk::VkBool32
+struct WindowRenderTargets
 {
-    println!("dbg_cb: {}", unsafe { std::ffi::CStr::from_ptr(message).to_str().unwrap() });
-    false as _
+    framebuffers: Vec<fe::Framebuffer>, renderpass: fe::RenderPass, backbuffers: Vec<fe::ImageView>,
+    swapchain: fe::Swapchain, size: fe::Extent2D
+}
+struct RenderTargetDependentResources
+{
+    gp: fe::Pipeline
+}
+impl RenderTargetDependentResources
+{
+    pub fn new(device: &fe::Device, res: &Resources, rtvs: &WindowRenderTargets) -> fe::Result<Self>
+    {
+        let vp = fe::vk::VkViewport
+        {
+            x: 0.0, y: 0.0, width: rtvs.size.0 as _, height: rtvs.size.1 as _, minDepth: 0.0, maxDepth: 1.0
+        };
+        let scis = fe::vk::VkRect2D
+        {
+            offset: fe::vk::VkOffset2D { x: 0, y: 0 },
+            extent: fe::vk::VkExtent2D { width: vp.width as _, height: vp.height as _ }
+        };
+        let gp = fe::GraphicsPipelineBuilder::new(&res.pl, (&rtvs.renderpass, 0))
+            .vertex_processing(fe::PipelineShader::new(&res.shaders.v_pass, "main", None), VBIND, VATTRS)
+            .fragment_shader(fe::PipelineShader::new(&res.shaders.f_phong, "main", None))
+            .primitive_topology(fe::vk::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false)
+            .fixed_viewport_scissors(fe::DynamicArrayState::Static(&[vp]), fe::DynamicArrayState::Static(&[scis]))
+            .rasterization_samples(1, vec![])
+            .add_attachment_blend(fe::vk::VkPipelineColorBlendAttachmentState
+            {
+                colorWriteMask: fe::vk::VK_COLOR_COMPONENT_A_BIT | fe::vk::VK_COLOR_COMPONENT_B_BIT |
+                    fe::vk::VK_COLOR_COMPONENT_G_BIT | fe::vk::VK_COLOR_COMPONENT_R_BIT, .. Default::default()
+            }).create(device, None)?;
+        
+        Ok(RenderTargetDependentResources { gp })
+    }
 }
 
 fn main() { std::process::exit(GUIApplication::run("Ferrite integration demo", App::new())); }

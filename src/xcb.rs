@@ -41,20 +41,33 @@ impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
         app.dg.postinit(&app);
 
 		app.srv.flush();
-		loop
+		if cfg!(all(not(feature = "manual_rendering"), feature = "with_ferrite"))
 		{
-			if let Some(e) = app.srv.poll_event()
+			loop
+			{
+				if let Some(e) = app.srv.poll_event()
+				{
+					if e.response_type() == rxcb::ClientMessageEvent::RESPONSE_ENUM
+					{
+						let e = unsafe { rxcb::ClientMessageEvent::from_ref(&e) };
+						if e.msg_type() == app.wm_protocols && e.data_as_u32() == app.wm_delete_window { break; }
+					}
+				}
+				else { app.dg.on_render_period(); }
+			}
+		}
+		else
+		{
+			while let Some(e) = app.srv.wait_event()
 			{
 				if e.response_type() == rxcb::ClientMessageEvent::RESPONSE_ENUM
 				{
 					let e = unsafe { rxcb::ClientMessageEvent::from_ref(&e) };
 					if e.msg_type() == app.wm_protocols && e.data_as_u32() == app.wm_delete_window { break; }
 				}
-				else { println!("response: {}", e.response_type()); }
-			}
-			else
-			{
-				#[cfg(feature = "with_ferrite")] app.dg.on_render_period();
+				#[cfg(feature = "with_ferrite")] {
+					if e.response_type() == rxcb::ExposeEvent::RESPONSE_ENUM { app.dg.on_render_period(); }
+				}
 			}
 		}
 		0
@@ -106,7 +119,8 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
     fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
 	{
 		let mut vlist = rxcb::WindowValueList::new();
-		vlist.back_pixel(0).border_pixel(0).colormap(&server.colormap).eventmask(rxcb::XCB_EVENT_MASK_EXPOSURE);
+		vlist/*.back_pixel(0).border_pixel(0)*/.colormap(&server.colormap);
+		if cfg!(feature = "manual_rendering") { vlist.eventmask(rxcb::XCB_EVENT_MASK_EXPOSURE); }
 		let mut allowed_actions = vec![
 			server.action_atoms.move_,
 			server.action_atoms.minimize,

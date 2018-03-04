@@ -7,6 +7,8 @@ build = "build.rs"
 [features]
 with_ferrite = ["ferrite"]
 with_xcb = ["xcb"]
+# マニュアルレンダリングモード: 任意のタイミングで描画を発行できるのでCPUを節約できる
+manual_rendering = []
 
 [dependencies]
 univstring = "0.2"
