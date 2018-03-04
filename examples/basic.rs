@@ -4,7 +4,7 @@ use appframe::*;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-pub struct Application(RefCell<Option<NativeWindow>>);
+pub struct Application(RefCell<Option<NativeWindow<Application>>>);
 impl EventDelegate for Application
 {
     fn postinit(&self, srv: &Rc<GUIApplication<Self>>)

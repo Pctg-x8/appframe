@@ -1,5 +1,4 @@
 
-#[macro_use] extern crate bitflags;
 extern crate libc;
 #[cfg(feature = "with_ferrite")] extern crate ferrite;
 
@@ -17,11 +16,11 @@ extern crate libc;
 #[cfg(feature = "with_xcb")] pub use xcb::{GUIApplication, NativeWindow, NativeWindowBuilder};
 
 use std::rc::Rc;
+use std::io::Result as IOResult;
 
 pub trait GUIApplicationRunner<E: EventDelegate>
 {
     fn run(appname: &str, delegate: E) -> i32;
-    fn event_delegate(&self) -> &Rc<E>;
 }
 #[cfg(feature = "with_ferrite")]
 pub trait FerriteRenderingServer
@@ -44,10 +43,10 @@ pub trait WindowBuilder<'c> : Sized
     fn resizable(&mut self, c: bool) -> &mut Self;
 
     /// Create a window
-    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> Option<NativeWindow>;
+    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
     #[cfg(feature = "with_ferrite")]
     /// Create a Renderable window
-    fn create_renderable<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> Option<NativeWindow>;
+    fn create_renderable<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
 }
 
 pub trait EventDelegate : Sized

@@ -1,5 +1,7 @@
 //! MacOS Runner
 
+#[macro_use] extern crate bitflags;
+
 use appkit::*;
 use objc::runtime::*;
 use objc::declare::*;

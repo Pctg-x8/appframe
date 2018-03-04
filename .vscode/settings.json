@@ -1,3 +1,3 @@
 {
-	"rust.features": ["with_xcb"]
+	"rust.features": ["with_xcb", "with_ferrite", "ferrite/VK_KHR_xcb_surface"]
 }

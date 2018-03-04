@@ -1,15 +1,17 @@
 //! AppFrame XCB implementation
 
 use rxcb; use rxcb::Event;
-use std::rc::Rc;
+use std::rc::*;
 use {GUIApplicationRunner, Window, WindowBuilder, EventDelegate};
 #[cfg(feature = "with_ferrite")] use ferrite as fe;
+use std::io::Result as IOResult;
 
+/// 透明を利用したい場合は32にする
 pub const BITDEPTH: u32 = 24;
 
 pub struct GUIApplication<E: EventDelegate>
 {
-	srv: Rc<rxcb::Connection>, dg: Rc<E>, root_id: rxcb::WindowID,
+	srv: Rc<rxcb::Connection>, dg: E, root_id: rxcb::WindowID,
 	wm_protocols: rxcb::Atom, wm_delete_window: rxcb::Atom,
 	desired_visualid: rxcb::VisualID, colormap: rxcb::Colormap,
 	action_atoms: ActionAtoms
@@ -30,48 +32,57 @@ impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
 		}
 		let app = Rc::new(GUIApplication
 		{
-			wm_protocols: srv.intern("WM_PROTOCOLS").reply(),
-			wm_delete_window: srv.intern("WM_DELETE_WINDOW").reply(),
+			wm_protocols: srv.intern("WM_PROTOCOLS").reply().unwrap(),
+			wm_delete_window: srv.intern("WM_DELETE_WINDOW").reply().unwrap(),
 			desired_visualid: visualid, colormap, root_id,
-			action_atoms: ActionAtoms::init(&srv),
-			srv: Rc::new(srv), dg: Rc::new(delegate)
+			action_atoms: ActionAtoms::init(&srv).unwrap(),
+			srv: Rc::new(srv), dg: delegate
 		});
-        app.event_delegate().postinit(&app);
+        app.dg.postinit(&app);
 
 		app.srv.flush();
-		while let Some(e) = app.srv.wait_event()
+		loop
 		{
-			if e.response_type() == rxcb::ClientMessageEvent::RESPONSE_ENUM
+			if let Some(e) = app.srv.poll_event()
 			{
-				let e = unsafe { rxcb::ClientMessageEvent::from_ref(&e) };
-				if e.msg_type() == app.wm_protocols && e.data_as_u32() == app.wm_delete_window { break; }
+				if e.response_type() == rxcb::ClientMessageEvent::RESPONSE_ENUM
+				{
+					let e = unsafe { rxcb::ClientMessageEvent::from_ref(&e) };
+					if e.msg_type() == app.wm_protocols && e.data_as_u32() == app.wm_delete_window { break; }
+				}
+			}
+			else
+			{
+				#[cfg(feature = "with_ferrite")] app.dg.on_render_period();
 			}
 		}
 		0
 	}
-    fn event_delegate(&self) -> &Rc<E> { &self.dg }
 }
 #[cfg(feature = "with_ferrite")]
 impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
 {
-    type SurfaceSource = NativeWindow;
+    type SurfaceSource = NativeWindow<E>;
 
     fn presentation_support(&self, adapter: &fe::PhysicalDevice, rendered_qf: u32) -> bool
 	{
-		adapter.xcb_presentation_support(rendered_qf, self.srv.inner(), self.visual)
+		adapter.xcb_presentation_support(rendered_qf, self.srv.inner(), self.desired_visualid)
 	}
-    fn create_surface(&self, w: &NativeWindow, instance: &fe::Instance) -> fe::Result<fe::Surface>
+    fn create_surface(&self, w: &NativeWindow<E>, instance: &fe::Instance) -> fe::Result<fe::Surface>
 	{
 		fe::Surface::new_xcb(instance, self.srv.inner(), w.0.id())
 	}
 }
 
-pub struct NativeWindow(rxcb::Window, Rc<rxcb::Connection>);
-impl Window for NativeWindow
+#[cfg(feature = "with_ferrite")]
+pub struct NativeWindow<E: EventDelegate>(rxcb::Window, Rc<GUIApplication<E>>, Option<FeViewController<E>>);
+#[cfg(not(feature = "with_ferrite"))]
+pub struct NativeWindow<E: EventDelegate>(rxcb::Window, Rc<GUIApplication<E>>);
+impl<E: EventDelegate> Window for NativeWindow<E>
 {
-    fn show(&self) { self.1.map_window(&self.0) }
+    fn show(&self) { self.1.srv.map_window(&self.0).unwrap(); }
 }
-impl Drop for NativeWindow { fn drop(&mut self) { self.1.destroy_window(&self.0); } }
+impl<E: EventDelegate> Drop for NativeWindow<E> { fn drop(&mut self) { self.1.srv.destroy_window(&self.0).unwrap(); } }
 pub struct NativeWindowBuilder<'c>
 {
 	pos: (i16, i16), size: (u16, u16), caption: &'c str, closable_: bool, resizable_: bool
@@ -91,7 +102,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
     fn resizable(&mut self, c: bool) -> &mut Self { self.resizable_ = c; self }
 
     /// Create a window
-    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> Option<NativeWindow>
+    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
 	{
 		let mut vlist = rxcb::WindowValueList::new();
 		vlist.back_pixel(0).border_pixel(0).colormap(&server.colormap);
@@ -111,16 +122,20 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
 		if self.resizable_ { allowed_actions.push(server.action_atoms.resize); }
 		let w = server.srv.new_window_id();
 		server.srv.create_window(Some(BITDEPTH as _), &w, Some(server.root_id), self.pos.0, self.pos.1,
-			self.size.0, self.size.1, 0, rxcb::WindowIOClass::InputOutput, Some(server.desired_visualid), &vlist);
+			self.size.0, self.size.1, 0, rxcb::WindowIOClass::InputOutput, Some(server.desired_visualid), &vlist)?;
+		w.replace_property(&server.srv, server.wm_protocols, &server.wm_delete_window);
 		w.replace_property(&server.srv, rxcb::XCB_ATOM_WM_NAME, self.caption);
 		w.replace_property(&server.srv, server.action_atoms.allowed_actions, &allowed_actions[..]);
-		Some(NativeWindow(w, server.srv.clone()))
+		#[cfg(feature = "with_ferrite")] { Ok(NativeWindow(w, server.clone(), None)) }
+		#[cfg(not(feature = "with_ferrite"))] { Ok(NativeWindow(w, server.clone())) }
 	}
     #[cfg(feature = "with_ferrite")]
     /// Create a Renderable window
-    fn create_renderable(&self, server: &Rc<GUIApplication<E>>) -> Option<NativeWindow>
+    fn create_renderable<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
 	{
-
+		let mut w = self.create(server)?;
+		let vc = FeViewController::new(server, &w);
+		w.2 = Some(vc); Ok(w)
 	}
 }
 pub struct ActionAtoms
@@ -133,7 +148,7 @@ pub struct ActionAtoms
 }
 impl ActionAtoms
 {
-	pub fn init(con: &rxcb::Connection) -> Self
+	pub fn init(con: &rxcb::Connection) -> Result<Self, rxcb::GenericError>
 	{
 		let aack = con.intern("_NET_WM_ALLOWED_ACTIONS");
 		let (mvc, rszc) = (con.intern("_NET_WM_ACTION_MOVE"), con.intern("_NET_WM_ACTION_RESIZE"));
@@ -141,15 +156,26 @@ impl ActionAtoms
 		let (shdc, stkc) = (con.intern("_NET_WM_ACTION_SHADE"), con.intern("_NET_WM_ACTION_STICK"));
 		let (mxhc, mxvc) = (con.intern("_NET_WM_ACTION_MAXIMIZE_HORZ"), con.intern("_NET_WM_ACTION_MAXIMIZE_VERT"));
 		let (fsc, cdc) = (con.intern("_NET_WM_ACTION_FULLSCREEN"), con.intern("_NET_WM_ACTION_CHANGE_DESKTOP"));
-		let (clc, abc, blc) = (con.intern("_NET_WM_ACTION_CLOSE"), con.intern("_NET_WM_ACTION_ABOVE"),
-			con.intern("_NET_WM_ACTION_BELOW"));
-		ActionAtoms
+		let clc = con.intern("_NET_WM_ACTION_CLOSE");
+		let (abc, blc) = (con.intern("_NET_WM_ACTION_ABOVE"), con.intern("_NET_WM_ACTION_BELOW"));
+
+		Ok(ActionAtoms
 		{
-			allowed_actions: aack.reply(),
-			move_: mvc.reply(), resize: rszc.reply(), minimize: minc.reply(),
-			shade: shdc.reply(), stick: stkc.reply(), maximize_h: mxhc.reply(), maximize_v: mxvc.reply(),
-			fullscreen: fsc.reply(), change_desktop: cdc.reply(), close: clc.reply(),
-			above: abc.reply(), below: blc.reply()
-		}
+			allowed_actions: aack.reply()?,
+			move_: mvc.reply()?, resize: rszc.reply()?, minimize: minc.reply()?,
+			shade: shdc.reply()?, stick: stkc.reply()?, maximize_h: mxhc.reply()?, maximize_v: mxvc.reply()?,
+			fullscreen: fsc.reply()?, change_desktop: cdc.reply()?, close: clc.reply()?,
+			above: abc.reply()?, below: blc.reply()?
+		})
+	}
+}
+
+pub struct FeViewController<E: EventDelegate>(Weak<GUIApplication<E>>);
+impl<E: EventDelegate> FeViewController<E>
+{
+	pub fn new(srv: &Rc<GUIApplication<E>>, w: &NativeWindow<E>) -> Self
+	{
+		srv.dg.on_init_view(srv, w);
+		FeViewController(Rc::downgrade(srv))
 	}
 }

@@ -49,6 +49,7 @@ impl EventDelegate for App
     {
         #[cfg(target_os = "macos")] const PLATFORM_SURFACE: &str = "VK_MVK_macos_surface";
         #[cfg(windows)] const PLATFORM_SURFACE: &str = "VK_KHR_win32_surface";
+        #[cfg(feature = "with_xcb")] const PLATFORM_SURFACE: &str = "VK_KHR_xcb_surface";
         let instance = fe::InstanceBuilder::new("appframe_integ", (0, 1, 0), "Ferrite", (0, 1, 0))
             .add_extensions(vec!["VK_KHR_surface", PLATFORM_SURFACE, "VK_EXT_debug_report"])
             .add_layer("VK_LAYER_LUNARG_standard_validation")

@@ -1,12 +1,14 @@
 //! Objective XCB Wrapper
 
+#![allow(dead_code)]
+
 extern crate univstring; use self::univstring::UnivString;
 extern crate xcb;
 use self::xcb::ffi::*;
 use std::ptr::{null, null_mut};
 use std::marker::PhantomData;
+use std::io::{Error as IOError, ErrorKind};
 
-#[allow(dead_code)]
 #[repr(C)] pub enum WindowIOClass
 {
 	InputOnly = XCB_WINDOW_CLASS_INPUT_ONLY as _,
@@ -32,33 +34,37 @@ impl Connection
 	pub fn new_id(&self) -> u32 { unsafe { xcb_generate_id(self.0) } }
 	pub fn new_window_id(&self) -> Window { Window(self.new_id()) }
 
-	/*pub fn try_intern<N: UnivString + ?Sized>(&self, name: &N) -> AtomCookie
+	/*pub fn try_intern(&self, name: &str) -> AtomCookie
 	{
-		let name = name.to_cstr().unwrap();
-		AtomCookie(unsafe { xcb_intern_atom(self.0, 0, name.to_bytes().len() as _, name.as_ptr()) }, self)
+		AtomCookie(unsafe { xcb_intern_atom(self.0, 0, name.len() as _, name.as_ptr()) }, self)
 	}*/
-	pub fn intern<N: UnivString + ?Sized>(&self, name: &N) -> AtomCookie
+	pub fn intern(&self, name: &str) -> AtomCookie
 	{
-		let name = name.to_cstr().unwrap();
-		AtomCookie(unsafe { xcb_intern_atom(self.0, 1, name.to_bytes().len() as _, name.as_ptr()) }, self)
+		AtomCookie(unsafe { xcb_intern_atom(self.0, 1, name.len() as _, name.as_ptr() as _) }, self)
 	}
 	pub fn flush(&self) { unsafe { xcb_flush(self.0); } }
 
 	pub fn create_window(&self, depth: Option<u8>, id: &Window, parent: Option<xcb_window_t>,
 		x: i16, y: i16, width: u16, height: u16, border_width: u16, class: WindowIOClass,
-		visual: Option<VisualID>, valuelist: &WindowValueList)
+		visual: Option<VisualID>, valuelist: &WindowValueList) -> Result<(), GenericError>
 	{
 		let serialized = valuelist.serialize();
 		unsafe
 		{
-			xcb_create_window(self.0, depth.unwrap_or(XCB_COPY_FROM_PARENT as _), id.0,
+			CheckedCookie(xcb_create_window_checked(self.0, depth.unwrap_or(XCB_COPY_FROM_PARENT as _), id.0,
 				parent.unwrap_or_else(|| self.setup().iter_roots().next().unwrap().root()),
 				x, y, width, height, border_width, class as _, visual.unwrap_or(XCB_COPY_FROM_PARENT as _),
-				valuelist.0, serialized.0 as *const _);
+				valuelist.0, serialized.0 as *const _), self).check()
 		}
 	}
-	pub fn map_window(&self, w: &Window) { unsafe { xcb_map_window(self.0, w.0); } }
-	pub fn destroy_window(&self, w: &Window) { unsafe { xcb_destroy_window(self.0, w.0); } }
+	pub fn map_window(&self, w: &Window) -> Result<(), GenericError>
+	{
+		unsafe { CheckedCookie(xcb_map_window_checked(self.0, w.0), self).check() }
+	}
+	pub fn destroy_window(&self, w: &Window) -> Result<(), GenericError>
+	{
+		unsafe { CheckedCookie(xcb_destroy_window_checked(self.0, w.0), self).check() }
+	}
 }
 impl Drop for Connection { fn drop(&mut self) { unsafe { xcb_disconnect(self.0) } } }
 
@@ -88,6 +94,7 @@ pub type WindowID = xcb_window_t;
 pub struct Window(WindowID);
 impl Window
 {
+	pub(crate) fn id(&self) -> WindowID { self.0 }
 	pub fn replace_property<T: PropertyType + ?Sized>(&self, con: &Connection, property: Atom, value: &T)
 	{
 		value.change_property_of(con, self, property, XCB_PROP_MODE_REPLACE)
@@ -136,15 +143,24 @@ impl<E: PropertyType> PropertyType for [E]
 }
 pub use self::xcb::ffi::XCB_ATOM_WM_NAME;
 
+pub struct CheckedCookie<'s>(xcb_void_cookie_t, &'s Connection);
+impl<'s> CheckedCookie<'s>
+{
+	pub fn check(&self) -> Result<(), GenericError>
+	{
+		let r = unsafe { xcb_request_check(self.1 .0, self.0) };
+		if r.is_null() { Ok(()) } else { Err(unsafe { GenericError::from_ptr(r) }) }
+	}
+}
 pub struct AtomCookie<'s>(xcb_intern_atom_cookie_t, &'s Connection);
 pub type Atom = xcb_atom_t;
 impl<'s> AtomCookie<'s>
 {
-	pub fn reply(self) -> Atom
+	pub fn reply(self) -> Result<Atom, GenericError>
 	{
 		let mut _eptr = null_mut();
-		let r = MallocBox(unsafe { xcb_intern_atom_reply(self.1 .0, self.0, &mut _eptr) });
-		r.atom
+		let r = unsafe { xcb_intern_atom_reply(self.1 .0, self.0, &mut _eptr) };
+		if r.is_null() { Err(unsafe { GenericError::from_ptr(_eptr) }) } else { Ok(MallocBox(r).atom) }
 	}
 }
 
@@ -155,6 +171,11 @@ impl Connection
 	pub fn wait_event(&self) -> Option<GenericEvent>
 	{
 		let p = unsafe { xcb_wait_for_event(self.0) };
+		if p.is_null() { None } else { Some(GenericEvent(MallocBox(p))) }
+	}
+	pub fn poll_event(&self) -> Option<GenericEvent>
+	{
+		let p = unsafe { xcb_poll_for_event(self.0) };
 		if p.is_null() { None } else { Some(GenericEvent(MallocBox(p))) }
 	}
 }
@@ -169,7 +190,29 @@ impl ClientMessageEvent
 	pub fn data_as_u32(&self) -> u32 { unsafe { *(self.0.data.data.as_ptr() as *const u32) } }
 }
 pub struct GenericError(MallocBox<xcb_generic_error_t>);
-impl AsRef<GenericError> for GenericEvent { fn as_ref(&self) -> &GenericError { unsafe { transmute(self) } } }
+impl GenericError
+{
+	unsafe fn from_ptr(p: *mut xcb_generic_error_t) -> Self { GenericError(MallocBox(p)) }
+}
+impl Debug for GenericError
+{
+	fn fmt(&self, fmt: &mut Formatter) -> FmtResult { write!(fmt, "GenericError(code={})", (*self.0).error_code) }
+}
+impl Display for GenericError
+{
+	fn fmt(&self, fmt: &mut Formatter) -> FmtResult { <Self as Debug>::fmt(self, fmt) }
+}
+impl From<GenericError> for IOError
+{
+	fn from(v: GenericError) -> IOError { IOError::new(ErrorKind::Other, Box::new(v)) }
+}
+impl ::std::error::Error for GenericError
+{
+	fn description(&self) -> &str { "XCB Generic Error" }
+	fn cause(&self) -> Option<&::std::error::Error> { None }
+}
+unsafe impl Send for GenericError {}
+unsafe impl Sync for GenericError {}
 pub trait Event
 {
 	const RESPONSE_ENUM: u8;
@@ -284,7 +327,7 @@ impl Colormap
 }
 
 use std::ops::{Deref, DerefMut};
-use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 /// Owned malloc-ed pointer box
 pub struct MallocBox<T: ?Sized>(pub *mut T);
 impl<T: ?Sized> Deref for MallocBox<T> { type Target = T; fn deref(&self) -> &T { unsafe { &*self.0 } } }
