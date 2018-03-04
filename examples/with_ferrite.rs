@@ -16,15 +16,14 @@ use std::borrow::Cow;
 
 struct App
 {
-    renderlayer: RefCell<Option<RenderLayer>>, ferrite: RefCell<Option<Ferrite>>, w: RefCell<Option<NativeWindow<App>>>,
-    dirty: Cell<bool>
+    renderlayer: RefCell<Option<RenderLayer>>, ferrite: RefCell<Option<Ferrite>>, w: RefCell<Option<NativeWindow<App>>>
 }
 pub struct Ferrite
 {
     gq: u32, _tq: u32, queue: fe::Queue, tqueue: fe::Queue, cmdpool: fe::CommandPool, tcmdpool: fe::CommandPool,
     semaphore_sync_next: fe::Semaphore, semaphore_command_completion: fe::Semaphore,
     fence_command_completion: fe::Fence,
-    device: fe::Device, adapter: fe::PhysicalDevice, d: fe::DebugReportCallback, instance: fe::Instance,
+    device: fe::Device, adapter: fe::PhysicalDevice, _d: fe::DebugReportCallback, instance: fe::Instance,
     device_memindex: u32, upload_memindex: u32,
 }
 pub struct RenderLayer
@@ -40,7 +39,7 @@ impl App
     {
         App
         {
-            w: RefCell::new(None), ferrite: RefCell::new(None), renderlayer: RefCell::new(None), dirty: Cell::new(false)
+            w: RefCell::new(None), ferrite: RefCell::new(None), renderlayer: RefCell::new(None)
         }
     }
 }
@@ -80,7 +79,7 @@ impl EventDelegate for App
             tcmdpool: fe::CommandPool::new(&device, tq, false, false).unwrap(),
             cmdpool: fe::CommandPool::new(&device, gq, false, false).unwrap(),
             queue: device.queue(gq, 0), tqueue: device.queue(tq, if united_queue { 1 } else { 0 }),
-            device, adapter, instance, gq, _tq: tq, d
+            device, adapter, instance, gq, _tq: tq, _d: d
         });
 
         let w = NativeWindowBuilder::new(640, 360, "Ferrite integration").create_renderable(server).unwrap();
@@ -259,29 +258,23 @@ impl EventDelegate for App
             render_commands, _framebuffers: framebuffers, _renderpass: rp, _bb_views: bb_views,
             swapchain, _surface: surface
         });
-        self.dirty.set(true);
     }
     fn on_render_period(&self)
     {
-        if self.dirty.get()
+        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
+        let rlr = self.renderlayer.borrow(); let rl = rlr.as_ref().unwrap();
+
+        let next_drawable = rl.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))
+            .unwrap() as usize;
+        f.queue.submit(&[fe::SubmissionBatch
         {
-            let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-            let rlr = self.renderlayer.borrow(); let rl = rlr.as_ref().unwrap();
-
-            let next_drawable = rl.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))
-                .unwrap() as usize;
-            f.queue.submit(&[fe::SubmissionBatch
-            {
-                command_buffers: Cow::Borrowed(&rl.render_commands[next_drawable..next_drawable+1]),
-                wait_semaphores: Cow::Borrowed(&[(&f.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
-                signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
-            }], Some(&f.fence_command_completion)).unwrap();
-            f.queue.present(&[(&rl.swapchain, next_drawable as _)], &[&f.semaphore_command_completion]).unwrap();
-            // コマンドバッファの使用が終了したことを明示する
-            f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
-
-            self.dirty.set(false);
-        }
+            command_buffers: Cow::Borrowed(&rl.render_commands[next_drawable..next_drawable+1]),
+            wait_semaphores: Cow::Borrowed(&[(&f.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
+            signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
+        }], Some(&f.fence_command_completion)).unwrap();
+        f.queue.present(&[(&rl.swapchain, next_drawable as _)], &[&f.semaphore_command_completion]).unwrap();
+        // コマンドバッファの使用が終了したことを明示する
+        f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
     }
 }
 extern "system" fn dbg_cb(_flags: fe::vk::VkDebugReportFlagsEXT, _object_type: fe::vk::VkDebugReportObjectTypeEXT,
