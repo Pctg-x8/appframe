@@ -7,6 +7,8 @@ use std::rc::*;
 use {GUIApplicationRunner, EventDelegate, Window, WindowBuilder};
 use std::marker::PhantomData;
 use std::io::{Result as IOResult, Error as IOError, ErrorKind};
+use std::ops::Deref;
+use std::mem::transmute;
 
 #[cfg(feature = "with_ferrite")] use ferrite as fe;
 
@@ -18,13 +20,10 @@ use std::io::{Result as IOResult, Error as IOError, ErrorKind};
 */
 
 /// Info.plistのCFBundleNameもしくはプロセス名
-fn product_name() -> NSString
+fn product_name() -> &'static NSString
 {
-    NSBundle::main().and_then(|b|
-    {
-        let p = b.object_for_info_dictionary_key("CFBundleName");
-        if p.is_null() { None } else { Some(unsafe { NSString::retain_id(p) }) }
-    }).unwrap_or_else(|| NSProcessInfo::current().unwrap().name())
+    NSBundle::main().and_then(|b| b.object_for_info_dictionary_key("CFBundleName"))
+        .unwrap_or_else(|| NSProcessInfo::current().unwrap().name())
 }
 
 #[allow(non_camel_case_types)] pub type objc_id = *mut Object;
@@ -75,10 +74,10 @@ macro_rules! DeclareObjcClass
     (#Declaring($d: expr)) => {  }
 }
 /// Store boxed pointer into ivar in objc object
-unsafe fn store_boxed_ptr<T>(obj: &mut Object, varname: &str, vbox: &Box<T>)
+/*unsafe fn store_boxed_ptr<T>(obj: &mut Object, varname: &str, vbox: &Box<T>)
 {
     obj.set_ivar(varname, &**vbox as *const _ as usize)
-}
+}*/
 #[allow(dead_code)]
 /// Store boxed pointer into ivar in objc object by transferring pointer's ownership
 unsafe fn move_boxed_ptr<T>(obj: &mut Object, varname: &str, vbox: Box<T>)
@@ -97,13 +96,14 @@ unsafe fn take_ptr<T>(obj: &mut Object, varname: &str) -> Box<T>
     Box::from_raw((*obj.get_ivar::<usize>(varname)) as _)
 }
 
-struct AppDelegate<E: EventDelegate>
+struct AppDelegate<E: EventDelegate>(Object, PhantomData<Rc<GUIApplication<E>>>);
+impl<E: EventDelegate> Deref for AppDelegate<E>
 {
-    ptr: objc_id, caller: Box<Rc<GUIApplication<E>>>
+    type Target = NSObject; fn deref(&self) -> &NSObject { unsafe { transmute(self) } }
 }
-impl<E: EventDelegate> AppDelegate<E>
+impl<E: EventDelegate + 'static> AppDelegate<E>
 {
-    fn new(caller: &Rc<GUIApplication<E>>, _appname: &str) -> Option<Self>
+    fn new(caller: &Rc<GUIApplication<E>>, _appname: &str) -> Option<AutoreleaseBox<Self>>
     {
         let class = DeclareObjcClass!{ class AppDelegate : NSObject
             {
@@ -115,8 +115,8 @@ impl<E: EventDelegate> AppDelegate<E>
         let ptr: *mut Object = unsafe { msg_send![class, new] };
         if ptr.is_null() { return None; }
         let caller = Box::new(caller.clone());
-        unsafe { store_boxed_ptr(&mut *ptr, "appinstance", &caller); }
-        Some(AppDelegate { ptr, caller })
+        unsafe { move_boxed_ptr(&mut *ptr, "appinstance", caller); }
+        Some(unsafe { AutoreleaseBox::from_id(ptr) })
     }
     extern fn did_finish_launching_cb(this: &Object, _selector: Sel, _notify: objc_id)
     {
@@ -134,7 +134,7 @@ impl<E: EventDelegate> AppDelegate<E>
     }
     fn init_menu(nsapp: &NSApplication, appname: &str)
     {
-        nsapp.set_main_menu(NSMenu::new().unwrap().add_item({
+        nsapp.set_main_menu(NSMenu::new().unwrap().add({
             NSMenuItem::new("", None, None).unwrap().set_submenu({
                 let about_menu = NSMenuItem::new(&format!("About {}", appname), Some(sel!(orderFrontStandardAboutPanel:)), None).unwrap();
                 let prefs = NSMenuItem::new("Preferences...", None, Some(&NSString::new(",").unwrap())).unwrap();
@@ -145,26 +145,26 @@ impl<E: EventDelegate> AppDelegate<E>
                 let quit_menu = NSMenuItem::new(&format!("Quit {}", appname), Some(sel!(terminate:)), Some(&NSString::new("q").unwrap())).unwrap();
 
                 NSMenu::new().unwrap()
-                    .add_item(&about_menu).add_separator()
-                    .add_item(&prefs).add_separator()
-                    .add_item(&services).add_separator()
-                    .add_item(&hide).add_item(hideother.set_accelerator(NSEventModifierFlags::COMMAND | NSEventModifierFlags::OPTION, "h"))
-                    .add_item(&showall).add_separator()
-                    .add_item(&quit_menu)
+                    .add(&about_menu).add(&NSMenuItem::separator().unwrap())
+                    .add(&prefs).add(&NSMenuItem::separator().unwrap())
+                    .add(&services).add(&NSMenuItem::separator().unwrap())
+                    .add(&hide).add(hideother.set_accelerator(NSEventModifierFlags::COMMAND | NSEventModifierFlags::OPTION, "h"))
+                    .add(&showall).add(&NSMenuItem::separator().unwrap())
+                    .add(&quit_menu)
             })
         }))
     }
 }
 
 pub struct GUIApplication<E: EventDelegate>(E);
-impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
+impl<E: EventDelegate + 'static> GUIApplicationRunner<E> for GUIApplication<E>
 {
     fn run(appname: &str, delegate: E) -> i32
     {
         let app = Rc::new(GUIApplication(delegate));
         let appdelegate = AppDelegate::new(&app, appname).unwrap();
         let nsapp = NSApplication::shared().expect("initializing shared NSApplication");
-        nsapp.set_delegate(appdelegate.ptr);
+        nsapp.set_delegate(appdelegate.as_ref());
         nsapp.set_activation_policy(NSApplicationActivationPolicy::Regular);
         nsapp.run();
         0
@@ -183,14 +183,15 @@ impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
 }
 
 #[cfg(feature = "with_ferrite")]
-pub struct NativeWindow<E: EventDelegate>(NSWindow, Option<FeRenderableViewController<E>>);
+pub struct NativeWindow<E: EventDelegate>(AutoreleaseBox<NSWindow>,
+    Option<AutoreleaseBox<FeRenderableViewController<E>>>);
 #[cfg(not(feature = "with_ferrite"))]
-pub struct NativeWindow<E: EventDelegate>(NSWindow, PhantomData<Weak<E>>);
-impl<E: EventDelegate> Window for NativeWindow<E>
+pub struct NativeWindow<E: EventDelegate>(AutoreleaseBox<NSWindow>, PhantomData<Rc<E>>);
+impl<E: EventDelegate + 'static> Window for NativeWindow<E>
 {
-    fn show(&self) { self.0.make_key_and_order_front(NSApplication::shared().unwrap().0); }
+    fn show(&self) { self.0.make_key_and_order_front(NSApplication::shared().unwrap().as_ref()); }
     #[cfg(feature = "with_ferrite")]
-    fn mark_dirty(&self) { if let Some(ref v) = self.1 { v.view().set_dirty(); } }
+    fn mark_dirty(&self) { if let Some(ref v) = self.1 { v.view().set_needs_display(true); } }
 }
 
 pub struct NativeWindowBuilder<'c>
@@ -226,12 +227,12 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         }).ok_or_else(|| IOError::new(ErrorKind::Other, "System I/O Error on creating NSWindow"))
     }
     #[cfg(feature = "with_ferrite")]
-    fn create_renderable<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
+    fn create_renderable<E: EventDelegate + 'static>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
     {
         let vc = FeRenderableViewController::new(self.caption, &self.client_rect(), server)?;
         unsafe
         {
-            NSWindow::with_view_controller_ptr(vc.0).map(|w| { w.center(); NativeWindow(w, Some(vc)) })
+            NSWindow::with_view_controller_ptr(vc.id()).map(|w| { w.center(); NativeWindow(w, Some(vc)) })
                 .ok_or_else(|| IOError::new(ErrorKind::Other, "System I/O Error on creating NSWindow"))
         }
     }
@@ -245,23 +246,32 @@ impl<'c> NativeWindowBuilder<'c>
 }
 
 #[cfg(feature = "with_ferrite")]
-pub struct FeRenderableView<E: EventDelegate>(objc_id, PhantomData<Rc<GUIApplication<E>>>);
+pub struct FeRenderableView<E: EventDelegate>(Object, PhantomData<Rc<GUIApplication<E>>>);
 #[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> FeRenderableView<E>
+impl<E: EventDelegate> Deref for FeRenderableView<E>
+{
+    type Target = NSView;
+    fn deref(&self) -> &NSView { unsafe { transmute(self) } }
+}
+#[cfg(feature = "with_ferrite")]
+impl<E: EventDelegate> NSRefCounted for FeRenderableView<E>
+{
+    fn as_object(&self) -> &NSObject { unsafe { transmute(self) } }
+}
+#[cfg(feature = "with_ferrite")]
+impl<E: EventDelegate + 'static> FeRenderableView<E>
 {
     fn class() -> &'static Class
     {
         extern fn yesman(_this: &Object, _sel: Sel) -> BOOL { YES }
         extern fn make_backing_layer(this: &Object, _sel: Sel) -> objc_id
         {
-            unsafe
-            {
-                let layer = CAMetalLayer::layer().expect("Creating CAMetalLayer");
-                let view_scale: CGSize = msg_send![this, convertSizeToBacking: CGSize { width: 1.0, height: 1.0 }];
-                layer.set_contents_scale(view_scale.width.min(view_scale.height));
-                #[cfg(feature = "manual_rendering")] layer.set_needs_display_on_bounds_change(true);
-                layer.leave_id()
-            }
+            let this: &NSView = unsafe { transmute(this) };
+            let layer = CAMetalLayer::layer().expect("Creating CAMetalLayer");
+            let view_scale = this.convert_size_to_backing(&NSSize { width: 1.0, height: 1.0 });
+            layer.set_contents_scale(view_scale.width.min(view_scale.height));
+            #[cfg(feature = "manual_rendering")] layer.set_needs_display_on_bounds_change(true);
+            layer.into_id()
         }
 
         Class::get("FeRenderableView").unwrap_or_else(|| DeclareObjcClass!{
@@ -278,20 +288,15 @@ impl<E: EventDelegate> FeRenderableView<E>
             }
         })
     }
-    fn new(d: &Rc<GUIApplication<E>>) -> Option<Self>
+    fn new(d: &Rc<GUIApplication<E>>) -> Option<AutoreleaseBox<Self>>
     {
         let obj: objc_id = unsafe { msg_send![Self::class(), new] };
         if obj.is_null() { None } else
         {
             unsafe { move_boxed_ptr(&mut *obj, "event_delegate", Box::new(d.clone())) };
-            Some(FeRenderableView(obj, PhantomData))
+            Some(unsafe { AutoreleaseBox::from_id(obj) })
         }
     }
-    fn set_frame(&self, f: &NSRect) { unsafe { msg_send![self.0, setFrame: f.clone()] } }
-    fn layer_ptr(&self) -> objc_id { unsafe { msg_send![self.0, layer] } }
-    fn set_dirty(&self) { unsafe { msg_send![self.0, setNeedsDisplay: YES]; } }
-
-    unsafe fn retain_raw(ptr: objc_id) -> Self { FeRenderableView(msg_send![ptr, retain], PhantomData) }
 
     #[cfg(feature = "manual_rendering")]
     extern fn display_layer(this: &Object, _sel: Sel, _layer: objc_id)
@@ -318,9 +323,18 @@ pub struct FeRenderableViewCtrlIvarShadowings<E: EventDelegate>
     displaylink: CVDisplayLink
 }
 #[cfg(feature = "with_ferrite")]
-pub struct FeRenderableViewController<E: EventDelegate>(objc_id, PhantomData<FeRenderableViewCtrlIvarShadowings<E>>);
+pub struct FeRenderableViewController<E: EventDelegate>(Object, PhantomData<FeRenderableViewCtrlIvarShadowings<E>>);
+impl<E: EventDelegate> Deref for FeRenderableViewController<E>
+{
+    type Target = NSViewController;
+    fn deref(&self) -> &NSViewController { unsafe { transmute(self) } }
+}
+impl<E: EventDelegate> NSRefCounted for FeRenderableViewController<E>
+{
+    fn as_object(&self) -> &NSObject { unsafe { transmute(self) } }
+}
 #[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> FeRenderableViewController<E>
+impl<E: EventDelegate + 'static> FeRenderableViewController<E>
 {
     fn class() -> &'static Class
     {
@@ -343,7 +357,7 @@ impl<E: EventDelegate> FeRenderableViewController<E>
         })
     }
 
-    fn new(title: &str, initial_frame_size: &NSRect, server: &Rc<GUIApplication<E>>) -> IOResult<Self>
+    fn new(title: &str, initial_frame_size: &NSRect, server: &Rc<GUIApplication<E>>) -> IOResult<AutoreleaseBox<Self>>
     {
         let title = NSString::new(title)
             .ok_or_else(|| IOError::new(ErrorKind::Other, "System I/O Error on creating NSString"))?;
@@ -358,8 +372,6 @@ impl<E: EventDelegate> FeRenderableViewController<E>
         {
             move_boxed_ptr(&mut *obj, "server_ptr", server);
             (*obj).set_ivar("initial_frame_size", initial_frame_size.clone());
-
-            msg_send![obj, setTitle: title.raw()];
         }
         #[cfg(not(feature = "manual_rendering"))] unsafe
         {
@@ -368,9 +380,10 @@ impl<E: EventDelegate> FeRenderableViewController<E>
             displaylink.set_callback(Some(Self::on_update_sync), obj as *mut _);
             move_boxed_ptr(&mut *obj, "dp_link_instance", displaylink);
         }
-        Ok(FeRenderableViewController(obj, PhantomData))
+        let obj = unsafe { AutoreleaseBox::<Self>::from_id(obj) };
+        obj.set_title(&title); Ok(obj)
     }
-    fn view(&self) -> FeRenderableView<E> { unsafe { FeRenderableView::retain_raw(msg_send![self.0, view]) } }
+    fn view(&self) -> &FeRenderableView<E> { unsafe { transmute(self.deref().view().unwrap()) } }
     extern fn load_view(this: &Object, _sel: Sel)
     {
         let fsize = unsafe { this.get_ivar::<NSRect>("initial_frame_size") };
@@ -379,7 +392,7 @@ impl<E: EventDelegate> FeRenderableViewController<E>
 
         view.set_frame(fsize);
         unsafe { msg_send![view.layer_ptr(), setFrame: fsize.clone()]; }
-        unsafe { msg_send![this, setView: view.0]; }
+        unsafe { msg_send![this, setView: view.id()]; }
     }
     extern fn view_did_load(this: &Object, _sel: Sel)
     {
@@ -419,9 +432,4 @@ impl<E: EventDelegate> FeRenderableViewController<E>
             msg_send![super(this, Class::get("NSViewController").unwrap()), dealloc];
         }
     }
-}
-#[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> Drop for FeRenderableViewController<E>
-{
-    fn drop(&mut self) { unsafe { msg_send![self.0, release] } }
 }

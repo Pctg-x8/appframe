@@ -49,7 +49,7 @@ pub trait WindowBuilder<'c> : Sized
     fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
     #[cfg(feature = "with_ferrite")]
     /// Create a Renderable window
-    fn create_renderable<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
+    fn create_renderable<E: EventDelegate + 'static>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
 }
 
 pub trait EventDelegate : Sized

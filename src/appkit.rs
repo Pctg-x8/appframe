@@ -3,7 +3,7 @@
 use libc::*;
 use objc::runtime::*;
 use std::mem::zeroed;
-use std::borrow::Cow;
+use std::borrow::*;
 use std::mem::forget;
 use objc::{Encode, Encoding};
 
@@ -61,6 +61,7 @@ pub struct CVSMPTETime
 #[repr(C)] #[derive(Debug, Clone, PartialEq)] pub struct CGPoint { pub x: CGFloat, pub y: CGFloat }
 #[repr(C)] #[derive(Debug, Clone, PartialEq)] pub struct CGSize  { pub width: CGFloat, pub height: CGFloat }
 #[repr(C)] #[derive(Debug, Clone, PartialEq)] pub struct CGRect  { pub origin: CGPoint, pub size: CGSize }
+pub type NSSize = CGSize;
 pub type NSRect = CGRect;
 
 unsafe impl Encode for CGPoint
@@ -128,102 +129,152 @@ bitflags! {
     }
 }
 
-pub struct NSApplication(pub(crate) *mut Object);
+use std::ops::Deref;
+use std::ptr::null_mut;
+use std::mem::transmute;
+pub trait NSRefCounted { fn as_object(&self) -> &NSObject; }
+pub struct NSObject(Object);
+impl NSObject
+{
+    pub fn retain(&self) -> *mut Self { unsafe { msg_send![&self.0, retain] } }
+    pub fn release(&self) { unsafe { msg_send![&self.0, release] } }
+}
+impl NSRefCounted for NSObject { fn as_object(&self) -> &NSObject { self } }
+impl<T: Deref<Target = NSObject>> NSRefCounted for T { fn as_object(&self) -> &NSObject { self.deref() } }
+impl AsRef<Object> for NSObject { fn as_ref(&self) -> &Object { &self.0 } }
+pub struct AutoreleaseBox<T: NSRefCounted>(*mut T);
+impl<T: NSRefCounted> Drop for AutoreleaseBox<T>
+{
+    fn drop(&mut self)
+    {
+        if let Some(p) = unsafe { self.0.as_ref() } { p.as_object().release(); self.0 = null_mut(); }
+    }
+}
+impl<T: NSRefCounted + 'static> AutoreleaseBox<T>
+{
+    // pub unsafe fn from_raw(p: *mut T) -> Self { AutoreleaseBox(p) }
+    pub unsafe fn from_id(p: *mut Object) -> Self { AutoreleaseBox(p as *mut _) }
+    pub unsafe fn retain_id(p: *mut Object) -> Self { Self::from_id(msg_send![p, retain]) }
+
+    pub fn id(&self) -> *mut Object { self.0 as _ }
+    pub fn into_id(self) -> *mut Object { let p = self.0; forget(self); p as *mut _ }
+}
+impl<T: NSRefCounted + 'static> Clone for AutoreleaseBox<T>
+{
+    fn clone(&self) -> Self { AutoreleaseBox(self.as_object().retain() as *mut _) }
+}
+impl<T: NSRefCounted + 'static> Deref for AutoreleaseBox<T>
+{
+    type Target = T; fn deref(&self) -> &T { unsafe { &*self.0 } }
+}
+impl<T: NSRefCounted + 'static> Borrow<T> for AutoreleaseBox<T>
+{
+    fn borrow(&self) -> &T { self.deref() }
+}
+macro_rules! DeclareClassDerivative
+{
+    ($t: ty : $o: ty) =>
+    {
+        impl Deref for $t { type Target = $o; fn deref(&self) -> &$o { unsafe { transmute(self) } } }
+    }
+}
+
+pub struct NSApplication(Object); DeclareClassDerivative!(NSApplication : NSObject);
 impl NSApplication
 {
-    pub fn shared() -> Option<Self>
+    pub fn shared() -> Option<&'static Self>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSApplication").unwrap(), sharedApplication] };
-        if p.is_null() { None } else { Some(NSApplication(p)) }
+        unsafe { (p as *const Self).as_ref() }
     }
 
     pub fn set_activation_policy(&self, policy: NSApplicationActivationPolicy) -> bool
     {
-        let b: BOOL = unsafe { msg_send![self.0, setActivationPolicy: policy as NSInteger] };
+        let b: BOOL = unsafe { msg_send![&self.0, setActivationPolicy: policy as NSInteger] };
         b == YES
     }
-    pub fn run(&self) { unsafe { msg_send![self.0, run] } }
+    pub fn run(&self) { unsafe { msg_send![&self.0, run] } }
     pub fn activate_ignoring_other_apps(&self)
     {
-        unsafe { msg_send![self.0, activateIgnoringOtherApps: YES] }
+        unsafe { msg_send![&self.0, activateIgnoringOtherApps: YES] }
     }
-    pub fn set_delegate(&self, delegate: *mut Object)
+    pub fn set_delegate(&self, delegate: &Object)
     {
-        unsafe { msg_send![self.0, setDelegate: delegate] }
+        unsafe { msg_send![&self.0, setDelegate: delegate] }
     }
     pub fn set_main_menu(&self, menu: &NSMenu)
     {
-        unsafe { msg_send![self.0, setMainMenu: menu.0] }
+        unsafe { msg_send![&self.0, setMainMenu: menu] }
     }
 }
-pub struct NSWindow(*mut Object);
+pub struct NSWindow(Object); DeclareClassDerivative!(NSWindow : NSObject);
 impl NSWindow
 {
-    pub fn new(content_rect: NSRect, style_mask: NSWindowStyleMask) -> Option<Self>
+    pub fn new(content_rect: NSRect, style_mask: NSWindowStyleMask) -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSWindow").unwrap(), alloc] };
         if p.is_null() { return None; }
-        let p: *mut Object = unsafe { msg_send![p, initWithContentRect: content_rect styleMask: style_mask backing: 2 defer: YES] };
-        if p.is_null() { None } else { Some(NSWindow(p)) }
+        let p: *mut Object = unsafe
+        {
+            msg_send![p, initWithContentRect: content_rect styleMask: style_mask backing: 2 defer: YES]
+        };
+        if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
     #[cfg(feature = "with_ferrite")]
-    pub unsafe fn with_view_controller_ptr(vc: *mut Object) -> Option<Self>
+    pub unsafe fn with_view_controller_ptr(vc: *mut Object) -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = msg_send![Class::get("NSWindow").unwrap(), windowWithContentViewController: vc];
-        if p.is_null() { None } else { Some(NSWindow(p)) }
+        if p.is_null() { None } else { Some(AutoreleaseBox::from_id(p)) }
     }
 
-    pub fn center(&self) { unsafe { msg_send![self.0, center] } }
-    pub fn make_key_and_order_front(&self, sender: *mut Object)
+    pub fn center(&self) { unsafe { msg_send![&self.0, center] } }
+    pub fn make_key_and_order_front(&self, sender: &Object)
     {
-        unsafe { msg_send![self.0, makeKeyAndOrderFront: sender] }
+        unsafe { msg_send![&self.0, makeKeyAndOrderFront: sender] }
     }
     pub fn set_title<Title: CocoaString + ?Sized>(&self, title: &Title)
     {
-        unsafe { msg_send![self.0, setTitle: title.to_nsstring().0] }
+        unsafe { msg_send![&self.0, setTitle: title.to_nsstring().id()] }
     }
 }
-impl Drop for NSWindow { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
-pub struct NSMenu(*mut Object);
+pub struct NSMenu(Object); DeclareClassDerivative!(NSMenu : NSObject);
 impl NSMenu
 {
-    pub fn new() -> Option<Self>
+    pub fn new() -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSMenu").unwrap(), new] };
-        if p.is_null() { None } else { Some(NSMenu(p)) }
+        if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
-    pub fn add_item(&self, item: &NSMenuItem) -> &Self
+    pub fn add(&self, item: &NSMenuItem) -> &Self
     {
-        unsafe { msg_send![self.0, addItem: item.0] }; self
-    }
-    pub fn add_separator(&self) -> &Self
-    {
-        let sep: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), separatorItem] };
-        if sep.is_null() { panic!("Null Separator"); }
-        unsafe { msg_send![self.0, addItem: sep] }; self
+        unsafe { msg_send![&self.0, addItem: item as *const _] }; self
     }
 }
-impl Drop for NSMenu { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
-pub struct NSMenuItem(*mut Object);
+pub struct NSMenuItem(Object); DeclareClassDerivative!(NSMenuItem : NSObject);
 impl NSMenuItem
 {
-    pub fn new<Title: CocoaString + ?Sized>(title: &Title, action: Option<Sel>, key_equivalent: Option<&NSString>) -> Option<Self>
+    pub fn new<Title: CocoaString + ?Sized>(title: &Title, action: Option<Sel>, key_equivalent: Option<&NSString>)
+        -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), alloc] };
         if p.is_null() { return None; }
-        let k = if let Some(k) = key_equivalent { k.clone() } else { NSString::empty().unwrap() };
-        let p: *mut Object = unsafe { msg_send![p, initWithTitle: title.to_nsstring().0 action: action.unwrap_or(zeroed()) keyEquivalent: k.0] };
-        if p.is_null() { None } else { Some(NSMenuItem(p)) }
+        let (title, action) = (title.to_nsstring(), action.unwrap_or(unsafe { zeroed() }));
+        let k = key_equivalent.unwrap_or_else(|| NSString::empty().unwrap());
+        let p: *mut Object = unsafe
+        {
+            msg_send![p, initWithTitle: title.id() action: action keyEquivalent: k as *const _]
+        };
+        if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
-    /*pub fn separator() -> Option<Self>
+    pub fn separator() -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSMenuItem").unwrap(), separatorItem] };
-        if p.is_null() { None } else { Some(NSMenuItem(unsafe { msg_send![p, retain] })) }
-    }*/
+        if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::retain_id(p) }) }
+    }
 
     pub fn set_submenu(&self, sub: &NSMenu) -> &Self
     {
-        unsafe { msg_send![self.0, setSubmenu: sub.0] }; self
+        unsafe { msg_send![&self.0, setSubmenu: sub as *const _] }; self
     }
     /*pub fn set_target(&self, target: *mut Object) -> &Self
     {
@@ -231,11 +282,11 @@ impl NSMenuItem
     }*/
     pub fn set_key_equivalent_modifier_mask(&self, mods: NSEventModifierFlags) -> &Self
     {
-        unsafe { msg_send![self.0, setKeyEquivalentModifierMask: mods.bits] }; self
+        unsafe { msg_send![&self.0, setKeyEquivalentModifierMask: mods.bits] }; self
     }
     pub fn set_key_equivalent<Str: CocoaString + ?Sized>(&self, k: &Str) -> &Self
     {
-        unsafe { msg_send![self.0, setKeyEquivalent: k.to_nsstring().0] }; self
+        unsafe { msg_send![&self.0, setKeyEquivalent: k.to_nsstring().id()] }; self
     }
     pub fn set_accelerator<Str: CocoaString + ?Sized>(&self, mods: NSEventModifierFlags, key: &Str) -> &Self
     {
@@ -243,35 +294,60 @@ impl NSMenuItem
     }
     // pub fn set_action(&self, sel: Sel) -> &Self { unsafe { msg_send![self.0, setAction: sel] }; self }
 }
-impl Drop for NSMenuItem { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
-/*pub struct NSView(*mut Object);
+pub struct NSView(Object); DeclareClassDerivative!(NSView : NSObject);
 impl NSView
 {
-    pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![self.0, setWantsLayer: flag as BOOL] } }
-    pub fn set_layer(&self, layer: *mut Object) { unsafe { msg_send![self.0, setLayer: layer] } }
-    pub fn layer_ptr(&self) -> *mut Object { unsafe { msg_send![self.0, layer] } }
-}*/
+    // pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![self.0, setWantsLayer: flag as BOOL] } }
+    // pub fn set_layer(&self, layer: *mut Object) { unsafe { msg_send![self.0, setLayer: layer] } }
+    pub fn layer_ptr(&self) -> *mut Object { unsafe { msg_send![&self.0, layer] } }
+    pub fn set_needs_display(&self, flag: bool) { unsafe { msg_send![&self.0, setNeedsDisplay: flag as BOOL] } }
+    pub fn set_frame(&self, f: &NSRect) { unsafe { msg_send![&self.0, setFrame: f.clone()] } }
+    pub fn convert_size_to_backing(&self, size: &NSSize) -> NSSize
+    {
+        unsafe { msg_send![&self.0, convertSizeToBacking:size.clone()] }
+    }
+}
+pub struct NSViewController(Object); DeclareClassDerivative!(NSViewController : NSObject);
+impl NSViewController
+{
+    pub fn view(&self) -> Option<&NSView>
+    {
+        unsafe { let p: *mut Object = msg_send![&self.0, view]; (p as *const NSView).as_ref() }
+    }
+    /*pub fn title(&self) -> Option<&NSString>
+    {
+        unsafe { let p: *mut Object = msg_send![&self.0, title]; (p as *const NSString).as_ref() }
+    }*/
+    pub fn set_title<S: CocoaString + ?Sized>(&self, title: &S)
+    {
+        unsafe { msg_send![&self.0, setTitle: title.to_nsstring().id()] }
+    }
+}
+
 #[cfg(feature = "with_ferrite")]
-pub struct CAMetalLayer(pub(crate) *mut Object);
+pub struct CALayer(Object); DeclareClassDerivative!(CALayer : NSObject);
+#[cfg(feature = "with_ferrite")]
+impl CALayer
+{
+    pub fn set_contents_scale(&self, scale: CGFloat) { unsafe { msg_send![&self.0, setContentsScale: scale]; } }
+    pub fn set_needs_display_on_bounds_change(&self, v: bool)
+    {
+        unsafe { msg_send![&self.0, setNeedsDisplayOnBoundsChange: if v { YES } else { NO }] }
+    }
+}
+#[cfg(feature = "with_ferrite")]
+pub struct CAMetalLayer(Object); DeclareClassDerivative!(CAMetalLayer : CALayer);
+impl NSRefCounted for CAMetalLayer { fn as_object(&self) -> &NSObject { unsafe { transmute(self) } } }
 #[cfg(feature = "with_ferrite")]
 impl CAMetalLayer
 {
-    pub fn layer() -> Option<Self>
+    pub fn layer() -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("CAMetalLayer").unwrap(), layer] };
-        if p.is_null() { None } else { Some(CAMetalLayer(p)) }
+        if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
-    pub fn set_contents_scale(&self, scale: CGFloat) { unsafe { msg_send![self.0, setContentsScale: scale]; } }
-    pub fn set_needs_display_on_bounds_change(&self, v: bool)
-    {
-        unsafe { msg_send![self.0, setNeedsDisplayOnBoundsChange: if v { YES } else { NO }] }
-    }
-
-    pub fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
 }
-#[cfg(feature = "with_ferrite")]
-impl Drop for CAMetalLayer { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
 #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 pub struct CVDisplayLink(CVDisplayLinkRef);
@@ -305,36 +381,43 @@ impl NSRunLoop
 }
 impl Drop for NSRunLoop { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }*/
 
-pub struct NSBundle(*mut Object);
+pub struct NSBundle(Object);
 impl NSBundle
 {
-    pub fn main() -> Option<Self>
+    pub fn main() -> Option<&'static Self>
     {
-        let p: *mut _ = unsafe { msg_send![Class::get("NSBundle").unwrap(), mainBundle] };
-        if p.is_null() { None } else { Some(NSBundle(p)) }
+        let p: *mut Object = unsafe { msg_send![Class::get("NSBundle").unwrap(), mainBundle] };
+        unsafe { (p as *const NSBundle).as_ref() }
     }
-    pub fn object_for_info_dictionary_key<K: CocoaString + ?Sized>(&self, key: &K) -> *mut Object
+    pub fn object_for_info_dictionary_key<K: CocoaString + ?Sized, V>(&self, key: &K) -> Option<&V>
     {
         let k = key.to_nsstring();
-        unsafe { msg_send![self.0, objectForInfoDictionaryKey: k.0] }
+        unsafe
+        {
+            let p: *mut Object = msg_send![&self.0, objectForInfoDictionaryKey: k.id()];
+            (p as *const V).as_ref()
+        }
     }
 }
-pub struct NSProcessInfo(*mut Object);
+pub struct NSProcessInfo(Object);
 impl NSProcessInfo
 {
-    pub fn current() -> Option<Self>
+    pub fn current() -> Option<&'static Self>
     {
-        let p: *mut _ = unsafe { msg_send![Class::get("NSProcessInfo").unwrap(), processInfo] };
-        if p.is_null() { None } else { Some(NSProcessInfo(p)) }
+        let p: *mut Object = unsafe { msg_send![Class::get("NSProcessInfo").unwrap(), processInfo] };
+        unsafe { (p as *const NSProcessInfo).as_ref() }
     }
-    pub fn name(&self) -> NSString { unsafe { NSString::retain_id(msg_send![self.0, processName]) } }
+    pub fn name(&self) -> &NSString
+    {
+        unsafe { let p: *mut Object = msg_send![&self.0, processName]; &*(p as *const NSString) }
+    }
 }
 
-pub struct NSString(pub(crate) *mut Object);
+pub struct NSString(Object); DeclareClassDerivative!(NSString : NSObject);
 #[allow(dead_code)]
 impl NSString
 {
-    pub fn new(s: &str) -> Option<Self>
+    pub fn new(s: &str) -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSString").unwrap(), alloc] };
         if p.is_null() { return None; }
@@ -343,47 +426,33 @@ impl NSString
         {
             msg_send![p, initWithBytes: bytes.as_ptr() length: bytes.len() as NSUInteger encoding: 4 as NSUInteger]
         };
-        if p.is_null() { None } else { Some(NSString(p)) }
+        if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
-    pub fn empty() -> Option<Self>
+    pub fn empty() -> Option<&'static Self>
     {
         let p: *mut Object = unsafe { msg_send![Class::get("NSString").unwrap(), string] };
-        if p.is_null() { None } else { Some(NSString(p)) }
+        unsafe { (p as *const Self).as_ref() }
     }
     pub fn to_str(&self) -> &str
     {
-        let ps: *const c_char = unsafe { msg_send![self.0, UTF8String] };
+        let ps: *const c_char = unsafe { msg_send![&self.0, UTF8String] };
         unsafe { ::std::ffi::CStr::from_ptr(ps).to_str().unwrap() }
-    }
-
-    pub(crate) fn raw(&self) -> *mut Object { self.0 }
-    pub(crate) fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
-    pub(crate) unsafe fn retain_id(id: *mut Object) -> Self { NSString(msg_send![id, retain]) }
-}
-impl Drop for NSString { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
-impl Clone for NSString
-{
-    fn clone(&self) -> Self
-    {
-        let p: *mut Object = unsafe { msg_send![self.0, retain] };
-        if p.is_null() { panic!("Failed retaining"); }
-        NSString(p)
     }
 }
 /// Ref to NSString or Ref to str slice
 pub trait CocoaString
 {
-    fn to_nsstring(&self) -> Cow<NSString>;
+    fn to_nsstring(&self) -> Cow<AutoreleaseBox<NSString>>;
 }
-impl CocoaString for NSString
+impl CocoaString for AutoreleaseBox<NSString>
 {
-    fn to_nsstring(&self) -> Cow<NSString> { Cow::Borrowed(self) }
+    fn to_nsstring(&self) -> Cow<AutoreleaseBox<NSString>> { Cow::Borrowed(self) }
 }
 impl CocoaString for str
 {
-    fn to_nsstring(&self) -> Cow<NSString> { Cow::Owned(NSString::new(self).unwrap()) }
+    fn to_nsstring(&self) -> Cow<AutoreleaseBox<NSString>> { Cow::Owned(NSString::new(self).unwrap()) }
 }
 impl CocoaString for String
 {
-    fn to_nsstring(&self) -> Cow<NSString> { Cow::Owned(NSString::new(self).unwrap()) }
+    fn to_nsstring(&self) -> Cow<AutoreleaseBox<NSString>> { Cow::Owned(NSString::new(self).unwrap()) }
 }
