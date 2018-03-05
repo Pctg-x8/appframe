@@ -11,30 +11,32 @@ use objc::{Encode, Encoding};
 type NSRunLoopMode = *mut Object;*/
 #[cfg(feature = "with_ferrite")]
 pub enum __CVDisplayLink {}
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 pub type CVDisplayLinkRef = *mut __CVDisplayLink;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 pub type CVReturn = i32;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 pub type CVDisplayLinkOutputCallback = Option<extern "system" fn(
     link: CVDisplayLinkRef, in_now: *const CVTimeStamp, in_output_time: *const CVTimeStamp,
     in_flags: CVOptionFlags, out_flags: *mut CVOptionFlags, context: *mut c_void) -> CVReturn>;
-#[cfg(feature = "with_ferrite")] #[repr(C)] #[allow(non_snake_case)]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[repr(C)] #[allow(non_snake_case)]
 pub struct CVTimeStamp
 {
     pub version: u32, pub videoTimeScale: i32, pub videoTime: i64,
     pub hostTime: u64, pub rateScalar: c_double, pub videoRefreshPeriod: i64,
     pub smpteTime: CVSMPTETime, pub flags: u64, pub reserved: u64
 }
-#[cfg(feature = "with_ferrite")] #[repr(C)] #[allow(non_snake_case)]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[repr(C)] #[allow(non_snake_case)]
 pub struct CVSMPTETime
 {
     pub subframes: i16, pub subframeDivisor: i16, pub counter: u32,
     pub type_: u32, pub flags: u32, pub hours: i16, pub minutes: i16, pub seconds: i16, pub frames: i16
 }
-#[cfg(feature = "with_ferrite")] pub type CVOptionFlags = u64;
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))] pub type CVOptionFlags = u64;
 #[link(name = "AppKit", kind = "framework")] extern {}
-#[cfg(feature = "with_ferrite")]
+#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 #[link(name = "QuartzCore", kind = "framework")] extern "system"
 {
     fn CVDisplayLinkCreateWithActiveCGDisplays(displayLinkOut: *mut CVDisplayLinkRef) -> CVReturn;
@@ -261,15 +263,19 @@ impl CAMetalLayer
         if p.is_null() { None } else { Some(CAMetalLayer(p)) }
     }
     pub fn set_contents_scale(&self, scale: CGFloat) { unsafe { msg_send![self.0, setContentsScale: scale]; } }
+    pub fn set_needs_display_on_bounds_change(&self, v: bool)
+    {
+        unsafe { msg_send![self.0, setNeedsDisplayOnBoundsChange: if v { YES } else { NO }] }
+    }
 
     pub fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
 }
 #[cfg(feature = "with_ferrite")]
 impl Drop for CAMetalLayer { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }
 
-#[cfg(feature = "with_ferrite")]
+#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 pub struct CVDisplayLink(CVDisplayLinkRef);
-#[cfg(feature = "with_ferrite")]
+#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 impl CVDisplayLink
 {
     pub fn with_active_display() -> Option<Self>
@@ -285,7 +291,7 @@ impl CVDisplayLink
     pub fn start(&self) { unsafe { CVDisplayLinkStart(self.0); } }
     pub fn stop(&self) { unsafe { CVDisplayLinkStop(self.0); } }
 }
-#[cfg(feature = "with_ferrite")]
+#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 impl Drop for CVDisplayLink { fn drop(&mut self) { unsafe { CVDisplayLinkRelease(self.0) } } }
 /*pub struct NSRunLoop(*mut Object);
 impl NSRunLoop
@@ -299,7 +305,33 @@ impl NSRunLoop
 }
 impl Drop for NSRunLoop { fn drop(&mut self) { unsafe { msg_send![self.0, release] } } }*/
 
+pub struct NSBundle(*mut Object);
+impl NSBundle
+{
+    pub fn main() -> Option<Self>
+    {
+        let p: *mut _ = unsafe { msg_send![Class::get("NSBundle").unwrap(), mainBundle] };
+        if p.is_null() { None } else { Some(NSBundle(p)) }
+    }
+    pub fn object_for_info_dictionary_key<K: CocoaString + ?Sized>(&self, key: &K) -> *mut Object
+    {
+        let k = key.to_nsstring();
+        unsafe { msg_send![self.0, objectForInfoDictionaryKey: k.0] }
+    }
+}
+pub struct NSProcessInfo(*mut Object);
+impl NSProcessInfo
+{
+    pub fn current() -> Option<Self>
+    {
+        let p: *mut _ = unsafe { msg_send![Class::get("NSProcessInfo").unwrap(), processInfo] };
+        if p.is_null() { None } else { Some(NSProcessInfo(p)) }
+    }
+    pub fn name(&self) -> NSString { unsafe { NSString::retain_id(msg_send![self.0, processName]) } }
+}
+
 pub struct NSString(pub(crate) *mut Object);
+#[allow(dead_code)]
 impl NSString
 {
     pub fn new(s: &str) -> Option<Self>
@@ -307,7 +339,10 @@ impl NSString
         let p: *mut Object = unsafe { msg_send![Class::get("NSString").unwrap(), alloc] };
         if p.is_null() { return None; }
         let bytes = s.as_bytes();
-        let p: *mut Object = unsafe { msg_send![p, initWithBytes: bytes.as_ptr() length: bytes.len() as NSUInteger encoding: 4 as NSUInteger] };
+        let p: *mut Object = unsafe
+        {
+            msg_send![p, initWithBytes: bytes.as_ptr() length: bytes.len() as NSUInteger encoding: 4 as NSUInteger]
+        };
         if p.is_null() { None } else { Some(NSString(p)) }
     }
     pub fn empty() -> Option<Self>
@@ -321,7 +356,6 @@ impl NSString
         unsafe { ::std::ffi::CStr::from_ptr(ps).to_str().unwrap() }
     }
 
-    #[cfg(feature = "with_ferrite")]
     pub(crate) fn raw(&self) -> *mut Object { self.0 }
     pub(crate) fn leave_id(self) -> *mut Object { let p = self.0; forget(self); p }
     pub(crate) unsafe fn retain_id(id: *mut Object) -> Self { NSString(msg_send![id, retain]) }

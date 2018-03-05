@@ -1,4 +1,5 @@
 
+#[cfg(target_os = "macos")] #[macro_use] extern crate bitflags;
 extern crate libc;
 #[cfg(feature = "with_ferrite")] extern crate ferrite;
 
@@ -33,6 +34,8 @@ pub trait FerriteRenderingServer
 pub trait Window
 {
     fn show(&self);
+    #[cfg(feature = "with_ferrite")]
+    fn mark_dirty(&self);
 }
 pub trait WindowBuilder<'c> : Sized
 {
@@ -52,11 +55,7 @@ pub trait WindowBuilder<'c> : Sized
 pub trait EventDelegate : Sized
 {
     fn postinit(&self, _server: &Rc<GUIApplication<Self>>) { }
-
-    #[cfg(feature = "with_ferrite")]
     fn on_activated(&self, _server: &Rc<GUIApplication<Self>>) { }
-    #[cfg(not(feature = "with_ferrite"))]
-    fn on_activated(&self) {  }
 
     #[cfg(feature = "with_ferrite")]
     fn on_init_view(&self, _server: &GUIApplication<Self>, _surface_onto: &<GUIApplication<Self> as FerriteRenderingServer>::SurfaceSource) { }
