@@ -5,7 +5,7 @@ extern crate comdrive;
 #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 use self::comdrive::*;
 
-use std::io::Error as IOError;
+use std::io::{Result as IOResult, Error as IOError};
 use std::mem::{uninitialized, zeroed, size_of};
 use std::ptr::{null_mut, null};
 use std::ffi::{CString, /*CStr*/};
@@ -26,8 +26,7 @@ use winapi::um::libloaderapi::GetModuleHandleA as GetModuleHandle;
 use winapi::um::combaseapi::{CoInitializeEx, CoUninitialize};
 use winapi::um::objbase::COINIT_MULTITHREADED;
 use std::rc::*;
-use {EventDelegate, GUIApplicationRunner};
-#[cfg(feature = "with_ferrite")] use std::io::Result as IOResult;
+use {EventDelegate, GUIApplicationRunner, Window, WindowBuilder};
 
 #[cfg(feature = "with_ferrite")] use ferrite as fe;
 
@@ -82,7 +81,7 @@ pub struct NativeWindow<E: EventDelegate>
     #[cfg(any(not(feature = "with_ferrite"), feature = "manual_rendering"))]
     callbox: Box<Rc<GUIApplication<E>>>
 }
-impl<E: EventDelegate> ::Window for NativeWindow<E>
+impl<E: EventDelegate> Window for NativeWindow<E>
 {
     fn show(&self) { unsafe { ShowWindow(self.h, SW_SHOWNORMAL); } }
     #[cfg(feature = "with_ferrite")]
@@ -94,7 +93,7 @@ pub struct NativeWindowBuilder<'c>
 {
     style: DWORD, cstyle: DWORD, width: u16, height: u16, caption: &'c str
 }
-impl<'c> ::WindowBuilder<'c> for NativeWindowBuilder<'c>
+impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
 {
     fn new(width: u16, height: u16, caption: &'c str) -> Self
     {
