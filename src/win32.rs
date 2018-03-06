@@ -1,5 +1,7 @@
 //! Windows Runner
 
+#![allow(unused_imports)]
+
 #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 extern crate comdrive;
 #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
