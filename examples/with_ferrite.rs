@@ -182,7 +182,8 @@ impl EventDelegate for App
             device, adapter, instance, gq, _tq: tq, _d: d
         });
 
-        let w = NativeWindowBuilder::new(640, 360, "Ferrite integration").create_renderable(server).unwrap();
+        let w = NativeWindowBuilder::new(640, 360, "Ferrite integration").transparent(true)
+            .create_renderable(server).unwrap();
         *self.w.borrow_mut() = Some(w);
         self.w.borrow().as_ref().unwrap().show();
     }
@@ -232,7 +233,7 @@ impl App
 
         let surface_caps = f.adapter.surface_capabilities(s)?;
         let surface_format = f.adapter.surface_formats(s)?.into_iter()
-            .find(|f| fe::FormatQuery(f.format).eq_bit_width(32).has_components(fe::FormatComponents::RGBA).has_element_of(fe::ElementType::UNORM).passed()).unwrap();
+            .find(|f| fe::FormatQuery(f.format).eq_bit_width(32).is_component_of(fe::FormatComponents::RGBA).has_element_of(fe::ElementType::UNORM).passed()).unwrap();
         let surface_pm = f.adapter.surface_present_modes(s)?.remove(0);
         let surface_size = match surface_caps.currentExtent
         {
@@ -242,7 +243,7 @@ impl App
         let swapchain = fe::SwapchainBuilder::new(s, surface_caps.minImageCount.max(2),
             surface_format.clone(), surface_size.clone(), fe::ImageUsage::COLOR_ATTACHMENT)
                 .present_mode(surface_pm).pre_transform(fe::SurfaceTransform::Identity)
-                .composite_alpha(fe::CompositeAlpha::Opaque).create(&f.device)?;
+                .composite_alpha(fe::CompositeAlpha::PostMultiplied).create(&f.device)?;
         // acquire_nextより前にやらないと死ぬ(get_images)
         let backbuffers = swapchain.get_images()?;
         let isr = fe::ImageSubresourceRange
@@ -312,7 +313,7 @@ impl App
                 {
                     offset: fe::vk::VkOffset2D { x: 0, y: 0 },
                     extent: fe::vk::VkExtent2D { width: rtvs.size.0, height: rtvs.size.1 }
-                }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 1.0])], true)
+                }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 0.5])], true)
                     .bind_graphics_pipeline(&rds.gp, &res.pl)
                     .bind_vertex_buffers(0, &[(&res.buf, 0)]).draw(3, 1, 0, 0)
                 .end_render_pass();

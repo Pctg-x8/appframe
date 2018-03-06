@@ -44,6 +44,8 @@ pub trait WindowBuilder<'c> : Sized
     fn closable(&mut self, c: bool) -> &mut Self;
     /// Set window as resizable(if true passed, default) or unresizable(if false passed)
     fn resizable(&mut self, c: bool) -> &mut Self;
+    /// Set whether the window's background is transparent
+    fn transparent(&mut self, c: bool) -> &mut Self;
 
     /// Create a window
     fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;

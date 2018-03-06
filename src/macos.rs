@@ -196,7 +196,7 @@ impl<E: EventDelegate + 'static> Window for NativeWindow<E>
 
 pub struct NativeWindowBuilder<'c>
 {
-    style: NSWindowStyleMask, width: u16, height: u16, caption: &'c str
+    style: NSWindowStyleMask, width: u16, height: u16, caption: &'c str, transparency: bool
 }
 impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
 {
@@ -205,7 +205,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         NativeWindowBuilder
         {
             style: NSWindowStyleMask::TITLED | NSWindowStyleMask::CLOSABLE | NSWindowStyleMask::MINIATURIZABLE | NSWindowStyleMask::RESIZABLE,
-            width, height, caption
+            width, height, caption, transparency: false
         }
     }
     fn closable(&mut self, c: bool) -> &mut Self
@@ -216,11 +216,18 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
     {
         if c { self.style |= NSWindowStyleMask::RESIZABLE } else { self.style &= !NSWindowStyleMask::RESIZABLE; } self
     }
+    fn transparent(&mut self, c: bool) -> &mut Self { self.transparency = c; self }
 
     fn create<E: EventDelegate>(&self, _server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
     {
         NSWindow::new(self.client_rect(), self.style).map(|w|
         {
+            if self.transparency
+            {
+                // w.set_alpha_value(0.0);
+                w.set_background_color(NSColor::clear_color().unwrap());
+                w.set_opaque(false);
+            }
             w.center(); w.set_title(self.caption);
             #[cfg(feature = "with_ferrite")] { NativeWindow(w, None) }
             #[cfg(not(feature = "with_ferrite"))] { NativeWindow(w, PhantomData) }
@@ -232,8 +239,17 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         let vc = FeRenderableViewController::new(self.caption, &self.client_rect(), server)?;
         unsafe
         {
-            NSWindow::with_view_controller_ptr(vc.id()).map(|w| { w.center(); NativeWindow(w, Some(vc)) })
-                .ok_or_else(|| IOError::new(ErrorKind::Other, "System I/O Error on creating NSWindow"))
+            NSWindow::with_view_controller_ptr(vc.id()).map(|w|
+            {
+                if self.transparency
+                {
+                    // w.set_alpha_value(1.0);
+                    w.set_background_color(NSColor::clear_color().unwrap());
+                    w.set_opaque(false);
+                    vc.view().layer().unwrap().set_opaque(false);
+                }
+                w.center(); NativeWindow(w, Some(vc))
+            }).ok_or_else(|| IOError::new(ErrorKind::Other, "System I/O Error on creating NSWindow"))
         }
     }
 }
@@ -324,11 +340,13 @@ pub struct FeRenderableViewCtrlIvarShadowings<E: EventDelegate>
 }
 #[cfg(feature = "with_ferrite")]
 pub struct FeRenderableViewController<E: EventDelegate>(Object, PhantomData<FeRenderableViewCtrlIvarShadowings<E>>);
+#[cfg(feature = "with_ferrite")]
 impl<E: EventDelegate> Deref for FeRenderableViewController<E>
 {
     type Target = NSViewController;
     fn deref(&self) -> &NSViewController { unsafe { transmute(self) } }
 }
+#[cfg(feature = "with_ferrite")]
 impl<E: EventDelegate> NSRefCounted for FeRenderableViewController<E>
 {
     fn as_object(&self) -> &NSObject { unsafe { transmute(self) } }

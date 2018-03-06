@@ -10,7 +10,7 @@ impl EventDelegate for Application
     fn postinit(&self, srv: &Rc<GUIApplication<Self>>)
     {
         let w = NativeWindowBuilder::new(640, 360, "AppFrame basic example")
-            .resizable(false).create(&srv).expect("Creating MainWindow");
+            .resizable(false).transparent(true).create(&srv).expect("Creating MainWindow");
         *self.0.borrow_mut() = Some(w);
         self.0.borrow().as_ref().unwrap().show();
     }

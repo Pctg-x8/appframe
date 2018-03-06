@@ -236,6 +236,15 @@ impl NSWindow
     {
         unsafe { msg_send![&self.0, setTitle: title.to_nsstring().id()] }
     }
+    pub fn set_alpha_value(&self, a: CGFloat) { unsafe { msg_send![&self.0, setAlphaValue: a] } }
+    pub fn set_background_color(&self, bg: &NSColor)
+    {
+        unsafe { msg_send![&self.0, setBackgroundColor: bg as *const _] }
+    }
+    pub fn set_opaque(&self, op: bool)
+    {
+        unsafe { msg_send![&self.0, setOpaque: if op { YES } else { NO }] }
+    }
 }
 pub struct NSMenu(Object); DeclareClassDerivative!(NSMenu : NSObject);
 impl NSMenu
@@ -301,12 +310,18 @@ impl NSView
     // pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![self.0, setWantsLayer: flag as BOOL] } }
     // pub fn set_layer(&self, layer: *mut Object) { unsafe { msg_send![self.0, setLayer: layer] } }
     pub fn layer_ptr(&self) -> *mut Object { unsafe { msg_send![&self.0, layer] } }
+    pub fn layer(&self) -> Option<&'static CALayer>
+    {
+        let p: *mut Object = unsafe { msg_send![&self.0, layer] };
+        unsafe { (p as *const CALayer).as_ref() }
+    }
     pub fn set_needs_display(&self, flag: bool) { unsafe { msg_send![&self.0, setNeedsDisplay: flag as BOOL] } }
     pub fn set_frame(&self, f: &NSRect) { unsafe { msg_send![&self.0, setFrame: f.clone()] } }
     pub fn convert_size_to_backing(&self, size: &NSSize) -> NSSize
     {
         unsafe { msg_send![&self.0, convertSizeToBacking:size.clone()] }
     }
+    pub fn set_opaque(&self, c: bool) { unsafe { msg_send![&self.0, setOpaque: if c { YES } else { NO }] } }
 }
 pub struct NSViewController(Object); DeclareClassDerivative!(NSViewController : NSObject);
 impl NSViewController
@@ -326,7 +341,8 @@ impl NSViewController
 }
 
 #[cfg(feature = "with_ferrite")]
-pub struct CALayer(Object); DeclareClassDerivative!(CALayer : NSObject);
+pub struct CALayer(Object);
+#[cfg(feature = "with_ferrite")] DeclareClassDerivative!(CALayer : NSObject);
 #[cfg(feature = "with_ferrite")]
 impl CALayer
 {
@@ -335,9 +351,12 @@ impl CALayer
     {
         unsafe { msg_send![&self.0, setNeedsDisplayOnBoundsChange: if v { YES } else { NO }] }
     }
+    pub fn set_opaque(&self, c: bool) { unsafe { msg_send![&self.0, setOpaque: if c { YES } else { NO }] } }
 }
 #[cfg(feature = "with_ferrite")]
-pub struct CAMetalLayer(Object); DeclareClassDerivative!(CAMetalLayer : CALayer);
+pub struct CAMetalLayer(Object);
+#[cfg(feature = "with_ferrite")] DeclareClassDerivative!(CAMetalLayer : CALayer);
+#[cfg(feature = "with_ferrite")]
 impl NSRefCounted for CAMetalLayer { fn as_object(&self) -> &NSObject { unsafe { transmute(self) } } }
 #[cfg(feature = "with_ferrite")]
 impl CAMetalLayer
@@ -455,4 +474,14 @@ impl CocoaString for str
 impl CocoaString for String
 {
     fn to_nsstring(&self) -> Cow<AutoreleaseBox<NSString>> { Cow::Owned(NSString::new(self).unwrap()) }
+}
+
+pub struct NSColor(Object); DeclareClassDerivative!(NSColor : NSObject);
+impl NSColor
+{
+    pub fn clear_color() -> Option<&'static Self>
+    {
+        let p: *mut Object = unsafe { msg_send![Class::get("NSColor").unwrap(), clearColor] };
+        unsafe { (p as *const Self).as_ref() }
+    }
 }
