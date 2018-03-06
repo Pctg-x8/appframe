@@ -195,7 +195,7 @@ impl EventDelegate for App
         let surface = server.create_surface(surface_onto, &f.instance).unwrap();
         if !f.adapter.surface_support(f.gq, &surface).unwrap() { panic!("Vulkan Rendering is not supported to this surface"); }
         *self.surface.borrow_mut() = Some(surface);
-        let rtvs = self.init_swapchains().unwrap();
+        let rtvs = self.init_swapchains().unwrap().unwrap();
         *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device,
             self.res.borrow().as_ref().unwrap(), &rtvs).unwrap());
         *self.rendertargets.borrow_mut() = Some(rtvs);
@@ -203,30 +203,52 @@ impl EventDelegate for App
     }
     fn on_render_period(&self)
     {
-        if let Err(e) = self.render()
+        if self.ensure_render_targets().unwrap()
         {
-            if e.0 == fe::vk::VK_ERROR_OUT_OF_DATE_KHR
+            if let Err(e) = self.render()
             {
-                // Require to recreate resources
-                let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-                let resr = self.res.borrow(); let res = resr.as_ref().unwrap();
+                if e.0 == fe::vk::VK_ERROR_OUT_OF_DATE_KHR
+                {
+                    // Require to recreate resources(discarding resources)
+                    let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
 
-                f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
-                *self.rcmds.borrow_mut() = None;
-                *self.rtdres.borrow_mut() = None;
-                *self.rendertargets.borrow_mut() = None;
-                *self.rendertargets.borrow_mut() = Some(self.init_swapchains().unwrap());
-                *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device, res,
-                    self.rendertargets.borrow().as_ref().unwrap()).unwrap());
-                *self.rcmds.borrow_mut() = Some(self.populate_render_commands().unwrap());
+                    f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
+                    *self.rcmds.borrow_mut() = None;
+                    *self.rtdres.borrow_mut() = None;
+                    *self.rendertargets.borrow_mut() = None;
+
+                    // reissue rendering
+                    self.on_render_period();
+                }
+                else { let e: fe::Result<()> = Err(e); e.unwrap(); }
             }
-            else { let e: fe::Result<()> = Err(e); e.unwrap(); }
         }
     }
 }
 impl App
 {
-    fn init_swapchains(&self) -> fe::Result<WindowRenderTargets>
+    fn ensure_render_targets(&self) -> fe::Result<bool>
+    {
+        if self.rendertargets.borrow().is_none()
+        {
+            let rtv = self.init_swapchains()?;
+            if rtv.is_none() { return Ok(false); }
+            *self.rendertargets.borrow_mut() = rtv;
+        }
+        if self.rtdres.borrow().is_none()
+        {
+            let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
+            let resr = self.res.borrow(); let res = resr.as_ref().unwrap();
+            *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device, res,
+                self.rendertargets.borrow().as_ref().unwrap())?);
+        }
+        if self.rcmds.borrow().is_none()
+        {
+            *self.rcmds.borrow_mut() = Some(self.populate_render_commands().unwrap());
+        }
+        Ok(true)
+    }
+    fn init_swapchains(&self) -> fe::Result<Option<WindowRenderTargets>>
     {
         let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
         let sr = self.surface.borrow(); let s = sr.as_ref().unwrap();
@@ -235,15 +257,21 @@ impl App
         let surface_format = f.adapter.surface_formats(s)?.into_iter()
             .find(|f| fe::FormatQuery(f.format).eq_bit_width(32).is_component_of(fe::FormatComponents::RGBA).has_element_of(fe::ElementType::UNORM).passed()).unwrap();
         let surface_pm = f.adapter.surface_present_modes(s)?.remove(0);
+        let surface_ca = if (surface_caps.supportedCompositeAlpha & fe::CompositeAlpha::PostMultiplied as u32) != 0
+        {
+            fe::CompositeAlpha::PostMultiplied
+        }
+        else { fe::CompositeAlpha::Opaque };
         let surface_size = match surface_caps.currentExtent
         {
             fe::vk::VkExtent2D { width: 0xffff_ffff, height: 0xffff_ffff } => fe::Extent2D(640, 360),
             fe::vk::VkExtent2D { width, height } => fe::Extent2D(width, height)
         };
+        if surface_size.0 <= 0 || surface_size.1 <= 0 { return Ok(None); }
         let swapchain = fe::SwapchainBuilder::new(s, surface_caps.minImageCount.max(2),
             surface_format.clone(), surface_size.clone(), fe::ImageUsage::COLOR_ATTACHMENT)
                 .present_mode(surface_pm).pre_transform(fe::SurfaceTransform::Identity)
-                .composite_alpha(fe::CompositeAlpha::PostMultiplied).create(&f.device)?;
+                .composite_alpha(surface_ca).create(&f.device)?;
         // acquire_nextより前にやらないと死ぬ(get_images)
         let backbuffers = swapchain.get_images()?;
         let isr = fe::ImageSubresourceRange
@@ -285,7 +313,10 @@ impl App
             command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
         }], Some(&fw)).unwrap(); fw.wait().unwrap();
         
-        Ok(WindowRenderTargets { swapchain, backbuffers: bb_views, framebuffers, renderpass: rp, size: surface_size })
+        Ok(Some(WindowRenderTargets
+        {
+            swapchain, backbuffers: bb_views, framebuffers, renderpass: rp, size: surface_size
+        }))
     }
     fn populate_render_commands(&self) -> fe::Result<RenderCommands>
     {
@@ -323,8 +354,8 @@ impl App
     fn render(&self) -> fe::Result<()>
     {
         let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-        let rcmdsr = self.rcmds.borrow(); let rcmds = rcmdsr.as_ref().unwrap();
         let rtvr = self.rendertargets.borrow(); let rtvs = rtvr.as_ref().unwrap();
+        let rcmdsr = self.rcmds.borrow(); let rcmds = rcmdsr.as_ref().unwrap();
 
         let next = rtvs.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))?
             as usize;

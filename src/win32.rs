@@ -1,15 +1,16 @@
 //! Windows Runner
 
-#[cfg(feature = "with_ferrite")]
+#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 extern crate comdrive;
-#[cfg(feature = "with_ferrite")]
+#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
 use self::comdrive::*;
 
 use std::io::Error as IOError;
 use std::mem::{uninitialized, zeroed, size_of};
-use std::ptr::null_mut;
+use std::ptr::{null_mut, null};
 use std::ffi::{CString, /*CStr*/};
 use winapi::ctypes::c_char;
+use winapi::shared::basetsd::LONG_PTR;
 use winapi::shared::windef::{HWND, RECT};
 use winapi::shared::minwindef::*;
 use winapi::shared::rpc::RPC_STATUS;
@@ -19,7 +20,7 @@ use self::{
     GetMessageA as GetMessage, DispatchMessageA as DispatchMessage,
     DefWindowProcA as DefWindowProc, LoadCursorA as LoadCursor,
     RegisterClassExA as RegisterClassEx, CreateWindowExA as CreateWindowEx,
-    WNDCLASSEXA as WNDCLASSEX
+    WNDCLASSEXA as WNDCLASSEX, SetWindowLongPtrA as SetWindowLongPtr, GetWindowLongPtrA as GetWindowLongPtr
 };
 use winapi::um::libloaderapi::GetModuleHandleA as GetModuleHandle;
 use winapi::um::combaseapi::{CoInitializeEx, CoUninitialize};
@@ -27,19 +28,17 @@ use winapi::um::objbase::COINIT_MULTITHREADED;
 use std::rc::*;
 use {EventDelegate, GUIApplicationRunner};
 #[cfg(feature = "with_ferrite")] use std::io::Result as IOResult;
-use std::marker::PhantomData;
 
 #[cfg(feature = "with_ferrite")] use ferrite as fe;
 
-pub struct GUIApplication<E: EventDelegate>(Option<Rc<E>>);
+pub struct GUIApplication<E: EventDelegate>(Option<E>);
 impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
 {
     fn run(_appname: &str, delegate: E) -> i32
     {
         unsafe { CoInitializeEx(null_mut(), COINIT_MULTITHREADED); }
-        let app = Rc::new(GUIApplication(Some(Rc::new(delegate))));
-        #[cfg(feature = "with_ferrite")] app.event_delegate().postinit(&app);
-        #[cfg(not(feature = "with_ferrite"))] app.event_delegate().postinit();
+        let app = Rc::new(GUIApplication(Some(delegate)));
+        app.event_delegate().postinit(&app);
 
         let mut msg = unsafe { uninitialized() };
         while unsafe { GetMessage(&mut msg, null_mut(), 0, 0) > 0 }
@@ -48,14 +47,17 @@ impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
         }
         msg.wParam as _
     }
-    fn event_delegate(&self) -> &Rc<E> { self.0.as_ref().unwrap() }
 }
 impl<E: EventDelegate> Drop for GUIApplication<E>
 {
     fn drop(&mut self)
     {
-        drop(self.0.take()); unsafe { CoUninitialize(); }
+        self.0 = None; unsafe { CoUninitialize(); }
     }
+}
+impl<E: EventDelegate> GUIApplication<E>
+{
+    fn event_delegate(&self) -> &E { self.0.as_ref().unwrap() }
 }
 #[cfg(feature = "with_ferrite")]
 impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
@@ -68,32 +70,38 @@ impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
     }
     fn create_surface(&self, w: &NativeWindow<E>, instance: &fe::Instance) -> fe::Result<fe::Surface>
     {
-        fe::Surface::new_win32(&instance, unsafe { GetModuleHandle(null_mut()) }, w.0)
+        fe::Surface::new_win32(&instance, unsafe { GetModuleHandle(null_mut()) }, w.h)
     }
 }
 
-#[cfg(feature = "with_ferrite")]
-pub struct NativeWindow<E: EventDelegate>(HWND, Option<NativeWindowController<E>>);
-#[cfg(not(feature = "with_ferrite"))]
-pub struct NativeWindow<E: EventDelegate>(HWND, PhantomData<Weak<GUIApplication<E>>>);
+pub struct NativeWindow<E: EventDelegate>
+{
+    h: HWND,
+    #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
+    controller: Option<Box<NativeWindowController<E>>>,
+    #[cfg(any(not(feature = "with_ferrite"), feature = "manual_rendering"))]
+    callbox: Box<Rc<GUIApplication<E>>>
+}
 impl<E: EventDelegate> ::Window for NativeWindow<E>
 {
-    fn show(&self) { unsafe { ShowWindow(self.0, SW_SHOWNORMAL); } }
+    fn show(&self) { unsafe { ShowWindow(self.h, SW_SHOWNORMAL); } }
+    #[cfg(feature = "with_ferrite")]
+    fn mark_dirty(&self) { unsafe { InvalidateRect(self.h, null(), false as _); } }
 }
 
 
-pub struct NativeWindowBuilder<'c, E: EventDelegate + 'c>
+pub struct NativeWindowBuilder<'c>
 {
-    style: DWORD, cstyle: DWORD, width: u16, height: u16, caption: &'c str, ph: PhantomData<&'c E>
+    style: DWORD, cstyle: DWORD, width: u16, height: u16, caption: &'c str
 }
-impl<'c, E: EventDelegate> ::WindowBuilder<'c, E> for NativeWindowBuilder<'c, E>
+impl<'c> ::WindowBuilder<'c> for NativeWindowBuilder<'c>
 {
     fn new(width: u16, height: u16, caption: &'c str) -> Self
     {
         NativeWindowBuilder
         {
             style: WS_CAPTION | WS_BORDER | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
-            cstyle: CS_OWNDC, width, height, caption, ph: PhantomData
+            cstyle: CS_OWNDC | CS_VREDRAW | CS_HREDRAW, width, height, caption
         }
     }
     fn closable(&mut self, c: bool) -> &mut Self
@@ -105,22 +113,26 @@ impl<'c, E: EventDelegate> ::WindowBuilder<'c, E> for NativeWindowBuilder<'c, E>
         let bits = WS_THICKFRAME | WS_MAXIMIZEBOX;
         if c { self.style |= bits; } else { self.style &= !bits; } self
     }
+    fn transparent(&mut self, _c: bool) -> &mut Self
+    {
+        println!("** Transparent Window support is incomplete for windows **");
+        self
+    }
 
-    type WindowTy = NativeWindow<E>;
-    fn create(&self) -> Option<NativeWindow<E>>
+    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>
     {
         let cname = UniqueString::generate();
         let wcap = CString::new(self.caption).unwrap();
         let wc = WNDCLASSEX
         {
-            cbSize: size_of::<WNDCLASSEX>() as _,
-            style: self.cstyle, lpszClassName: cname.as_ptr(), lpfnWndProc: Some(wndproc),
+            cbSize: size_of::<WNDCLASSEX>() as _, cbWndExtra: size_of::<usize>() as _,
+            style: self.cstyle, lpszClassName: cname.as_ptr(), lpfnWndProc: Some(wndproc::<E>),
             hInstance: unsafe { GetModuleHandle(null_mut()) },
             hCursor: unsafe { LoadCursor(null_mut(), IDC_ARROW as _) },
             .. unsafe { zeroed() }
         };
         let atom = unsafe { RegisterClassEx(&wc) };
-        if atom == 0 { panic!("Failed to allocate WindowClass: {:?}", IOError::last_os_error()); }
+        if atom == 0 { return Err(IOError::last_os_error()); }
         let r = self.adjusted_window_rect();
         let hw = unsafe
         {
@@ -128,38 +140,54 @@ impl<'c, E: EventDelegate> ::WindowBuilder<'c, E> for NativeWindowBuilder<'c, E>
                 CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top,
                 null_mut(), null_mut(), wc.hInstance, null_mut())
         };
-        if hw.is_null() { panic!("Failed to create window: {:?}", IOError::last_os_error()); }
-        #[cfg(feature = "with_ferrite")] { Some(NativeWindow(hw, None)) }
-        #[cfg(not(feature = "with_ferrite"))] { Some(NativeWindow(hw, PhantomData)) }
+        if hw.is_null() { return Err(IOError::last_os_error()); }
+        #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
+        { Ok(NativeWindow { h: hw, controller: None }) }
+        #[cfg(any(not(feature = "with_ferrite"), feature = "manual_rendering"))]
+        {
+            let callbox = Box::new(server.clone());
+            unsafe { SetWindowLongPtr(hw, GWL_USERDATA, (&*callbox) as *const _ as LONG_PTR); }
+            Ok(NativeWindow { h: hw, callbox })
+        }
     }
     #[cfg(feature = "with_ferrite")]
-    fn create_renderable(&self, server: &Rc<GUIApplication<E>>) -> Option<Self::WindowTy>
+    fn create_renderable<E: EventDelegate + 'static>(&self, server: &Rc<GUIApplication<E>>)
+        -> IOResult<NativeWindow<E>>
     {
-        let mut w = if let Some(v) = self.create() { v } else { return None; };
-        w.1 = match NativeWindowController::new(server)
+        #[cfg(feature = "manual_rendering")]
+        let w = self.create(server)?;
+        #[cfg(not(feature = "manual_rendering"))]
+        let w = 
         {
-            Ok(v) => Some(v),
-            Err(e) => { println!("Error while initialising NativeWindowController: {}", e); return None; }
+            let mut w = self.create(server)?;
+            w.controller = Some(NativeWindowController::new(server)?); w
         };
-        server.event_delegate().on_init_view(&server, &w); Some(w)
+        server.event_delegate().on_init_view(&server, &w); Ok(w)
     }
 }
-impl<'c, E: EventDelegate> NativeWindowBuilder<'c, E>
+impl<'c> NativeWindowBuilder<'c>
 {
     fn adjusted_window_rect(&self) -> RECT
     {
-        let mut r = RECT
-        {
-            left: 0, top: 0, right: self.width as _, bottom: self.height as _
-        };
+        let mut r = RECT { left: 0, top: 0, right: self.width as _, bottom: self.height as _ };
         unsafe { AdjustWindowRectEx(&mut r, self.style, false as _, 0) }; r
     }
 }
-extern "system" fn wndproc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) -> LRESULT
+extern "system" fn wndproc<E: EventDelegate>(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) -> LRESULT
 {
     match msg
     {
         WM_DESTROY => unsafe { PostQuitMessage(0); 0 },
+        #[cfg(all(feature = "with_ferrite", feature = "manual_rendering"))]
+        WM_PAINT => unsafe
+        {
+            let cb = (GetWindowLongPtr(hwnd, GWL_USERDATA) as *const Rc<GUIApplication<E>>).as_ref().unwrap();
+            let mut ps = uninitialized();
+            BeginPaint(hwnd, &mut ps);
+            cb.event_delegate().on_render_period();
+            EndPaint(hwnd, &ps);
+            0
+        },
         _ => unsafe { DefWindowProc(hwnd, msg, wp, lp) }
     }
 }
@@ -173,38 +201,41 @@ extern
     fn RpcStringFreeA(string: *mut RPC_CSTR) -> RPC_STATUS;
 }
 
-#[cfg(feature = "with_ferrite")]
-struct NativeWindowController<E: EventDelegate>(uianimation::Timer, Weak<GUIApplication<E>>, UpdateTimerHandlerCell);
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+struct NativeWindowController<E: EventDelegate>
+{
+    server: Rc<GUIApplication<E>>, autotimer: (uianimation::Timer, UpdateTimerHandlerCell)
+}
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 impl<E: EventDelegate> NativeWindowController<E>
 {
     pub fn new(srv: &Rc<GUIApplication<E>>) -> IOResult<Self>
     {
         let mut timer = uianimation::Timer::new()?;
-        let update_handler = UpdateTimerHandlerCell(UpdateTimerHandler::create(srv.event_delegate()));
+        let update_handler = UpdateTimerHandlerCell(UpdateTimerHandler::create(srv));
         timer.set_update_handler(Some(&update_handler), uianimation::IdleBehavior::Disable)?;
         timer.enable()?;
-        Ok(NativeWindowController(timer, Rc::downgrade(srv), update_handler))
+        Ok(NativeWindowController { server: srv.clone(), autotimer: (timer, update_handler) })
     }
 }
 
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::shared::winerror::*;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::ctypes::c_void;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::shared::guiddef::REFIID;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::um::unknwnbase::IUnknown;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::Interface;
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 #[repr(C)] pub struct UpdateTimerHandler<E: EventDelegate>
 {
     vtbl: *const uianimation::IUIAnimationTimerUpdateHandlerVtbl, refcount: ULONG,
-    client_handler: Option<TimerClientEventHandler>, callback: Weak<E>
+    client_handler: Option<TimerClientEventHandler>, callback: Rc<GUIApplication<E>>
 }
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 impl<E: EventDelegate> UpdateTimerHandler<E>
 {
     const UPDATE_TIMER_HANDLER_VTBL: &'static uianimation::IUIAnimationTimerUpdateHandlerVtbl =
@@ -216,11 +247,11 @@ impl<E: EventDelegate> UpdateTimerHandler<E>
             ClearTimerClientEventHandler: Self::clear_timer_client_event_handler
         };
     
-    pub fn create(callback: &Rc<E>) -> *mut uianimation::IUIAnimationTimerUpdateHandler
+    pub fn create(callback: &Rc<GUIApplication<E>>) -> *mut uianimation::IUIAnimationTimerUpdateHandler
     {
         Box::into_raw(Box::new(UpdateTimerHandler
         {
-            vtbl: Self::UPDATE_TIMER_HANDLER_VTBL, refcount: 1, client_handler: None, callback: Rc::downgrade(callback)
+            vtbl: Self::UPDATE_TIMER_HANDLER_VTBL, refcount: 1, client_handler: None, callback: callback.clone()
         })) as _
     }
     unsafe fn refptr<'a>(ptr: *const uianimation::IUIAnimationTimerUpdateHandler) -> &'a Self { &*(ptr as *const Self) }
@@ -277,18 +308,18 @@ impl<E: EventDelegate> UpdateTimerHandler<E>
         unsafe { Self::refmut(this).client_handler = None; S_OK }
     }
 }
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 pub struct UpdateTimerHandlerCell(*mut uianimation::IUIAnimationTimerUpdateHandler);
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 impl Drop for UpdateTimerHandlerCell { fn drop(&mut self) { unsafe { (*self.0).Release(); } } }
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 impl AsRawHandle<uianimation::IUIAnimationTimerUpdateHandler> for UpdateTimerHandlerCell
 {
     fn as_raw_handle(&self) -> *mut uianimation::IUIAnimationTimerUpdateHandler { self.0 }
 }
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 pub struct TimerClientEventHandler(*mut uianimation::IUIAnimationTimerClientEventHandler);
-#[cfg(feature = "with_ferrite")]
+#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
 impl Drop for TimerClientEventHandler { fn drop(&mut self) { unsafe { (*self.0).Release(); } } }
 
 // use std::str::Utf8Error;

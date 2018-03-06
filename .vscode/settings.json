@@ -1,4 +1,5 @@
 {
 	// "rust.features": ["with_xcb", "with_ferrite", "ferrite/VK_KHR_xcb_surface"]
-	"rust.features": ["with_ferrite", "ferrite/VK_MVK_macos_surface", "manual_rendering"]	
+	// "rust.features": ["with_ferrite", "ferrite/VK_MVK_macos_surface", "manual_rendering"]
+	"rust.features": ["with_ferrite", "ferrite/VK_KHR_win32_surface", "manual_rendering"]
 }
