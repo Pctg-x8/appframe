@@ -21,7 +21,7 @@ use std::io::Result as IOResult;
 
 pub trait GUIApplicationRunner<E: EventDelegate>
 {
-    fn run(appname: &str, delegate: E) -> i32;
+    fn run(delegate: E) -> i32;
 }
 #[cfg(feature = "with_ferrite")]
 pub trait FerriteRenderingServer

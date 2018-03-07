@@ -22,5 +22,5 @@ impl Application
 
 fn main()
 {
-    GUIApplication::run("basic", Application::new());
+    GUIApplication::run(Application::new());
 }

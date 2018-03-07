@@ -408,4 +408,4 @@ impl RenderTargetDependentResources
     }
 }
 
-fn main() { std::process::exit(GUIApplication::run("Ferrite integration demo", App::new())); }
+fn main() { std::process::exit(GUIApplication::run(App::new())); }

@@ -35,7 +35,7 @@ use {EventDelegate, GUIApplicationRunner, Window, WindowBuilder};
 pub struct GUIApplication<E: EventDelegate>(Option<E>);
 impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
 {
-    fn run(_appname: &str, delegate: E) -> i32
+    fn run(delegate: E) -> i32
     {
         unsafe { CoInitializeEx(null_mut(), COINIT_MULTITHREADED); }
         let app = Rc::new(GUIApplication(Some(delegate)));
