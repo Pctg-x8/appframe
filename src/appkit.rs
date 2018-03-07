@@ -315,6 +315,11 @@ impl NSView
         let p: *mut Object = unsafe { msg_send![&self.0, layer] };
         unsafe { (p as *const CALayer).as_ref() }
     }
+    pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![&self.0, setWantsLayer: flag as BOOL] } }
+    pub fn set_layer_contents_redraw_policy(&self, value: i32)
+    {
+        unsafe { msg_send![&self.0, setLayerContentsRedrawPolicy: value] }
+    }
     pub fn set_needs_display(&self, flag: bool) { unsafe { msg_send![&self.0, setNeedsDisplay: flag as BOOL] } }
     pub fn set_frame(&self, f: &NSRect) { unsafe { msg_send![&self.0, setFrame: f.clone()] } }
     pub fn convert_size_to_backing(&self, size: &NSSize) -> NSSize
@@ -340,10 +345,7 @@ impl NSViewController
     }
 }
 
-#[cfg(feature = "with_ferrite")]
-pub struct CALayer(Object);
-#[cfg(feature = "with_ferrite")] DeclareClassDerivative!(CALayer : NSObject);
-#[cfg(feature = "with_ferrite")]
+pub struct CALayer(Object); DeclareClassDerivative!(CALayer : NSObject);
 impl CALayer
 {
     pub fn set_contents_scale(&self, scale: CGFloat) { unsafe { msg_send![&self.0, setContentsScale: scale]; } }

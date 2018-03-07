@@ -103,7 +103,7 @@ impl<E: EventDelegate> Deref for AppDelegate<E>
 }
 impl<E: EventDelegate + 'static> AppDelegate<E>
 {
-    fn new(caller: &Rc<GUIApplication<E>>, _appname: &str) -> Option<AutoreleaseBox<Self>>
+    fn new(caller: &Rc<GUIApplication<E>>) -> Option<AutoreleaseBox<Self>>
     {
         let class = DeclareObjcClass!{ class AppDelegate : NSObject
             {
@@ -159,10 +159,10 @@ impl<E: EventDelegate + 'static> AppDelegate<E>
 pub struct GUIApplication<E: EventDelegate>(E);
 impl<E: EventDelegate + 'static> GUIApplicationRunner<E> for GUIApplication<E>
 {
-    fn run(appname: &str, delegate: E) -> i32
+    fn run(delegate: E) -> i32
     {
         let app = Rc::new(GUIApplication(delegate));
-        let appdelegate = AppDelegate::new(&app, appname).unwrap();
+        let appdelegate = AppDelegate::new(&app).unwrap();
         let nsapp = NSApplication::shared().expect("initializing shared NSApplication");
         nsapp.set_delegate(appdelegate.as_ref());
         nsapp.set_activation_policy(NSApplicationActivationPolicy::Regular);
@@ -171,14 +171,12 @@ impl<E: EventDelegate + 'static> GUIApplicationRunner<E> for GUIApplication<E>
     }
 }
 #[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
+impl<E: EventDelegate> ::FerriteRenderingServer<E> for GUIApplication<E>
 {
-    type SurfaceSource = objc_id;
-
     fn presentation_support(&self, _adapter: &fe::PhysicalDevice, _queue_family_index: u32) -> bool { true }
-    fn create_surface(&self, w: &objc_id, instance: &fe::Instance) -> fe::Result<fe::Surface>
+    fn create_surface(&self, w: &FeRenderableView<E>, instance: &fe::Instance) -> fe::Result<fe::Surface>
     {
-        fe::Surface::new_macos(instance, (*w) as *const _)
+        fe::Surface::new_macos(instance, w as *const FeRenderableView<E> as *const _)
     }
 }
 
@@ -331,6 +329,9 @@ impl<E: EventDelegate + 'static> FeRenderableView<E>
         }
     }
 }
+#[cfg(feature = "with_ferrite")]
+pub type NativeView<E> = FeRenderableView<E>;
+#[cfg(not(feature = "with_ferrite"))] pub type NativeView<E> = (NSView, PhantomData<E>);
 #[cfg(feature = "with_ferrite")] #[cfg(feature = "manual_rendering")]
 pub struct FeRenderableViewCtrlIvarShadowings<E: EventDelegate>
 {
@@ -414,10 +415,11 @@ impl<E: EventDelegate + 'static> FeRenderableViewController<E>
     }
     extern fn view_did_load(this: &Object, _sel: Sel)
     {
-        let v: objc_id = unsafe { msg_send![this, view] };
-        unsafe { msg_send![v, setWantsLayer: YES] };
-        unsafe { msg_send![v, setLayerContentsRedrawPolicy: 2 /* NSViewLayerContentsRedrawDuringViewResize */]; }
-        let srv: &Rc<GUIApplication<E>> = unsafe { retrieve_ptr(this, "server_ptr") };
+        let this: &Self = unsafe { transmute(this) };
+        let v = this.view();
+        v.set_wants_layer(true);
+        v.set_layer_contents_redraw_policy(2  /* NSViewLayerContentsRedrawDuringViewResize */);
+        let srv: &Rc<GUIApplication<E>> = unsafe { retrieve_ptr(transmute(this), "server_ptr") };
         srv.0.on_init_view(&srv, &v);
     }
     #[cfg(not(feature = "manual_rendering"))]
