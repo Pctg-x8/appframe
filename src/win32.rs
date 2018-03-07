@@ -61,15 +61,13 @@ impl<E: EventDelegate> GUIApplication<E>
     fn event_delegate(&self) -> &E { self.0.as_ref().unwrap() }
 }
 #[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
+impl<E: EventDelegate> ::FerriteRenderingServer<E> for GUIApplication<E>
 {
-    type SurfaceSource = NativeWindow<E>;
-
     fn presentation_support(&self, adapter: &fe::PhysicalDevice, rendered_qf: u32) -> bool
     {
         adapter.win32_presentation_support(rendered_qf)
     }
-    fn create_surface(&self, w: &NativeWindow<E>, instance: &fe::Instance) -> fe::Result<fe::Surface>
+    fn create_surface(&self, w: &NativeView<E>, instance: &fe::Instance) -> fe::Result<fe::Surface>
     {
         fe::Surface::new_win32(&instance, unsafe { GetModuleHandle(null_mut()) }, w.h)
     }
@@ -89,7 +87,7 @@ impl<E: EventDelegate> Window for NativeWindow<E>
     #[cfg(feature = "with_ferrite")]
     fn mark_dirty(&self) { unsafe { InvalidateRect(self.h, null(), false as _); } }
 }
-
+pub type NativeView<E> = NativeWindow<E>;
 
 pub struct NativeWindowBuilder<'c>
 {

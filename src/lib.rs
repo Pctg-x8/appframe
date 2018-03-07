@@ -6,15 +6,15 @@ extern crate libc;
 #[cfg(target_os = "macos")] #[macro_use] extern crate objc;
 #[cfg(target_os = "macos")] #[macro_use] mod appkit;
 #[cfg(target_os = "macos")] mod macos;
-#[cfg(target_os = "macos")] pub use macos::{GUIApplication, NativeWindow, NativeWindowBuilder};
+#[cfg(target_os = "macos")] pub use macos::{GUIApplication, NativeWindow, NativeView, NativeWindowBuilder};
 
 #[cfg(windows)] extern crate winapi;
 #[cfg(windows)] mod win32;
-#[cfg(windows)] pub use win32::{GUIApplication, NativeWindow, NativeWindowBuilder};
+#[cfg(windows)] pub use win32::{GUIApplication, NativeWindow, NativeView, NativeWindowBuilder};
 
 #[cfg(feature = "with_xcb")] mod rxcb;
 #[cfg(feature = "with_xcb")] mod xcb;
-#[cfg(feature = "with_xcb")] pub use xcb::{GUIApplication, NativeWindow, NativeWindowBuilder};
+#[cfg(feature = "with_xcb")] pub use xcb::{GUIApplication, NativeWindow, NativeView, NativeWindowBuilder};
 
 use std::rc::Rc;
 use std::io::Result as IOResult;
@@ -24,12 +24,10 @@ pub trait GUIApplicationRunner<E: EventDelegate>
     fn run(delegate: E) -> i32;
 }
 #[cfg(feature = "with_ferrite")]
-pub trait FerriteRenderingServer
+pub trait FerriteRenderingServer<E: EventDelegate>
 {
-    type SurfaceSource;
-
     fn presentation_support(&self, adapter: &ferrite::PhysicalDevice, rendered_qf: u32) -> bool;
-    fn create_surface(&self, w: &Self::SurfaceSource, instance: &ferrite::Instance) -> ferrite::Result<ferrite::Surface>;
+    fn create_surface(&self, w: &NativeView<E>, instance: &ferrite::Instance) -> ferrite::Result<ferrite::Surface>;
 }
 pub trait Window
 {
@@ -60,7 +58,7 @@ pub trait EventDelegate : Sized
     fn on_activated(&self, _server: &Rc<GUIApplication<Self>>) { }
 
     #[cfg(feature = "with_ferrite")]
-    fn on_init_view(&self, _server: &GUIApplication<Self>, _surface_onto: &<GUIApplication<Self> as FerriteRenderingServer>::SurfaceSource) { }
+    fn on_init_view(&self, _server: &GUIApplication<Self>, _surface_onto: &NativeView<Self>) { }
 
     #[cfg(feature = "with_ferrite")]
     fn on_render_period(&self) {}

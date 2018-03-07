@@ -187,7 +187,7 @@ impl EventDelegate for App
         *self.w.borrow_mut() = Some(w);
         self.w.borrow().as_ref().unwrap().show();
     }
-    fn on_init_view(&self, server: &GUIApplication<Self>, surface_onto: &<GUIApplication<Self> as FerriteRenderingServer>::SurfaceSource)
+    fn on_init_view(&self, server: &GUIApplication<Self>, surface_onto: &NativeView<Self>)
     {
         let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
 
