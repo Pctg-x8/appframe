@@ -138,7 +138,8 @@ impl<E: EventDelegate + 'static> AppDelegate<E>
             NSMenuItem::new("", None, None).unwrap().set_submenu({
                 let about_menu = NSMenuItem::new(&format!("About {}", appname), Some(sel!(orderFrontStandardAboutPanel:)), None).unwrap();
                 let prefs = NSMenuItem::new("Preferences...", None, Some(&NSString::new(",").unwrap())).unwrap();
-                let services = NSMenuItem::new("Services", None, None).unwrap(); services.set_submenu(&NSMenu::new().unwrap());
+                let services = NSMenuItem::new("Services", None, None).unwrap();
+                services.set_submenu(&NSMenu::new().unwrap());
                 let hide = NSMenuItem::new(&format!("Hide {}", appname), Some(sel!(hide:)), Some(&NSString::new("h").unwrap())).unwrap();
                 let hideother = NSMenuItem::new("Hide Others", Some(sel!(hideOtherApplications:)), None).unwrap();
                 let showall = NSMenuItem::new("Show All", Some(sel!(unhideAllApplications:)), None).unwrap();
@@ -410,8 +411,8 @@ impl<E: EventDelegate + 'static> FeRenderableViewController<E>
         let view = FeRenderableView::new(srv).expect("Failed to create Renderable View");
 
         view.set_frame(fsize);
-        unsafe { msg_send![view.layer_ptr(), setFrame: fsize.clone()]; }
-        unsafe { msg_send![this, setView: view.id()]; }
+        let _: () = unsafe { msg_send![view.layer_ptr(), setFrame: fsize.clone()] };
+        let _: () = unsafe { msg_send![this, setView: view.id()] };
     }
     extern fn view_did_load(this: &Object, _sel: Sel)
     {

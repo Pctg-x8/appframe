@@ -136,8 +136,12 @@ pub trait NSRefCounted { fn as_object(&self) -> &NSObject; }
 pub struct NSObject(Object);
 impl NSObject
 {
-    pub fn retain(&self) -> *mut Self { unsafe { msg_send![&self.0, retain] } }
-    pub fn release(&self) { unsafe { msg_send![&self.0, release] } }
+    pub fn retain(&self) -> *mut Self
+    {
+        let p: *mut Object = unsafe { msg_send![&self.0, retain] };
+        return p as *mut Self;
+    }
+    pub fn release(&self) { let _: () = unsafe { msg_send![&self.0, release] }; }
 }
 impl NSRefCounted for NSObject { fn as_object(&self) -> &NSObject { self } }
 impl<T: Deref<Target = NSObject>> NSRefCounted for T { fn as_object(&self) -> &NSObject { self.deref() } }
@@ -204,7 +208,7 @@ impl NSApplication
     }
     pub fn set_main_menu(&self, menu: &NSMenu)
     {
-        unsafe { msg_send![&self.0, setMainMenu: menu] }
+        let _: () = unsafe { msg_send![&self.0, setMainMenu: &menu.0] };
     }
 }
 pub struct NSWindow(Object); DeclareClassDerivative!(NSWindow : NSObject);
@@ -216,11 +220,10 @@ impl NSWindow
         if p.is_null() { return None; }
         let p: *mut Object = unsafe
         {
-            msg_send![p, initWithContentRect: content_rect styleMask: style_mask backing: 2 defer: YES]
+            msg_send![p, initWithContentRect: content_rect styleMask: style_mask.bits() backing: 2usize defer: YES]
         };
         if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
-    #[cfg(feature = "with_ferrite")]
     pub unsafe fn with_view_controller_ptr(vc: *mut Object) -> Option<AutoreleaseBox<Self>>
     {
         let p: *mut Object = msg_send![Class::get("NSWindow").unwrap(), windowWithContentViewController: vc];
@@ -239,7 +242,7 @@ impl NSWindow
     pub fn set_alpha_value(&self, a: CGFloat) { unsafe { msg_send![&self.0, setAlphaValue: a] } }
     pub fn set_background_color(&self, bg: &NSColor)
     {
-        unsafe { msg_send![&self.0, setBackgroundColor: bg as *const _] }
+        let _: () = unsafe { msg_send![&self.0, setBackgroundColor: &bg.0] };
     }
     pub fn set_opaque(&self, op: bool)
     {
@@ -256,7 +259,8 @@ impl NSMenu
     }
     pub fn add(&self, item: &NSMenuItem) -> &Self
     {
-        unsafe { msg_send![&self.0, addItem: item as *const _] }; self
+        let _: () = unsafe { msg_send![&self.0, addItem: &item.0] };
+        return self;
     }
 }
 pub struct NSMenuItem(Object); DeclareClassDerivative!(NSMenuItem : NSObject);
@@ -271,7 +275,7 @@ impl NSMenuItem
         let k = key_equivalent.unwrap_or_else(|| NSString::empty().unwrap());
         let p: *mut Object = unsafe
         {
-            msg_send![p, initWithTitle: title.id() action: action keyEquivalent: k as *const _]
+            msg_send![p, initWithTitle: title.id() action: action keyEquivalent: &k.0]
         };
         if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
@@ -283,7 +287,8 @@ impl NSMenuItem
 
     pub fn set_submenu(&self, sub: &NSMenu) -> &Self
     {
-        unsafe { msg_send![&self.0, setSubmenu: sub as *const _] }; self
+        let _: () = unsafe { msg_send![&self.0, setSubmenu: &sub.0] };
+        return self;
     }
     /*pub fn set_target(&self, target: *mut Object) -> &Self
     {
@@ -291,11 +296,13 @@ impl NSMenuItem
     }*/
     pub fn set_key_equivalent_modifier_mask(&self, mods: NSEventModifierFlags) -> &Self
     {
-        unsafe { msg_send![&self.0, setKeyEquivalentModifierMask: mods.bits] }; self
+        let _: () = unsafe { msg_send![&self.0, setKeyEquivalentModifierMask: mods.bits] };
+        return self;
     }
     pub fn set_key_equivalent<Str: CocoaString + ?Sized>(&self, k: &Str) -> &Self
     {
-        unsafe { msg_send![&self.0, setKeyEquivalent: k.to_nsstring().id()] }; self
+        let _: () = unsafe { msg_send![&self.0, setKeyEquivalent: k.to_nsstring().id()] };
+        return self;
     }
     pub fn set_accelerator<Str: CocoaString + ?Sized>(&self, mods: NSEventModifierFlags, key: &Str) -> &Self
     {
@@ -316,7 +323,7 @@ impl NSView
         unsafe { (p as *const CALayer).as_ref() }
     }
     pub fn set_wants_layer(&self, flag: bool) { unsafe { msg_send![&self.0, setWantsLayer: flag as BOOL] } }
-    pub fn set_layer_contents_redraw_policy(&self, value: i32)
+    pub fn set_layer_contents_redraw_policy(&self, value: isize)
     {
         unsafe { msg_send![&self.0, setLayerContentsRedrawPolicy: value] }
     }
@@ -341,14 +348,17 @@ impl NSViewController
     }*/
     pub fn set_title<S: CocoaString + ?Sized>(&self, title: &S)
     {
-        unsafe { msg_send![&self.0, setTitle: title.to_nsstring().id()] }
+        let _: () = unsafe { msg_send![&self.0, setTitle: title.to_nsstring().id()] };
     }
 }
 
 pub struct CALayer(Object); DeclareClassDerivative!(CALayer : NSObject);
 impl CALayer
 {
-    pub fn set_contents_scale(&self, scale: CGFloat) { unsafe { msg_send![&self.0, setContentsScale: scale]; } }
+    pub fn set_contents_scale(&self, scale: CGFloat)
+    {
+        let _: () = unsafe { msg_send![&self.0, setContentsScale: scale] };
+    }
     pub fn set_needs_display_on_bounds_change(&self, v: bool)
     {
         unsafe { msg_send![&self.0, setNeedsDisplayOnBoundsChange: if v { YES } else { NO }] }
@@ -440,12 +450,14 @@ impl NSString
 {
     pub fn new(s: &str) -> Option<AutoreleaseBox<Self>>
     {
+        use std::os::raw::c_void;
+
         let p: *mut Object = unsafe { msg_send![Class::get("NSString").unwrap(), alloc] };
         if p.is_null() { return None; }
         let bytes = s.as_bytes();
         let p: *mut Object = unsafe
         {
-            msg_send![p, initWithBytes: bytes.as_ptr() length: bytes.len() as NSUInteger encoding: 4 as NSUInteger]
+            msg_send![p, initWithBytes: bytes.as_ptr() as *const c_void length: bytes.len() as NSUInteger encoding: 4 as NSUInteger]
         };
         if p.is_null() { None } else { Some(unsafe { AutoreleaseBox::from_id(p) }) }
     }
