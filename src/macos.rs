@@ -314,7 +314,7 @@ impl<E: EventDelegate + 'static> FeRenderableView<E>
         if obj.is_null() { Err(()) } else
         {
             unsafe { move_boxed_ptr(&mut *obj, "event_delegate", Box::new(d.clone())) };
-            unsafe { CocoaObject::from_id(obj) }
+            unsafe { Ok(CocoaObject::from_id_unchecked(obj)) }
         }
     }
 

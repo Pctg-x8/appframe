@@ -9,7 +9,7 @@ use appframe::*;
 use ferrite as fe;
 use fe::traits::*;
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::cell::{RefCell, Ref};
 use std::borrow::Cow;
 
 #[repr(C)] #[derive(Clone)] pub struct Vertex([f32; 4], [f32; 4]);
@@ -141,26 +141,14 @@ impl EventDelegate for App
             let init_commands = cmdpool.alloc(1, true).unwrap();
             init_commands[0].begin().unwrap()
                 .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::TRANSFER, true,
-                    &[], &[fe::vk::VkBufferMemoryBarrier
-                    {
-                        buffer: buf.native_ptr(), offset: 0, size: bufsize as _,
-                        srcAccessMask: 0, dstAccessMask: fe::vk::VK_ACCESS_TRANSFER_WRITE_BIT,
-                        .. Default::default()
-                    }, fe::vk::VkBufferMemoryBarrier
-                    {
-                        buffer: upload_buf.native_ptr(), offset: 0, size: bufsize as _,
-                        srcAccessMask: 0, dstAccessMask: fe::vk::VK_ACCESS_TRANSFER_READ_BIT,
-                        .. Default::default()
-                    }], &[])
+                    &[], &[
+                        fe::BufferMemoryBarrier::new(&buf, 0 .. bufsize, 0, fe::AccessFlags::TRANSFER.write),
+                        fe::BufferMemoryBarrier::new(&upload_buf, 0 .. bufsize, 0, fe::AccessFlags::TRANSFER.read)
+                    ], &[])
                 .copy_buffer(&upload_buf, &buf, &[fe::vk::VkBufferCopy { srcOffset: 0, dstOffset: 0, size: bufsize as _ }])
                 .pipeline_barrier(fe::PipelineStageFlags::TRANSFER, fe::PipelineStageFlags::VERTEX_INPUT, true,
-                    &[], &[fe::vk::VkBufferMemoryBarrier
-                    {
-                        buffer: buf.native_ptr(), offset: 0, size: bufsize as _,
-                        srcAccessMask: fe::vk::VK_ACCESS_TRANSFER_WRITE_BIT,
-                        dstAccessMask: fe::vk::VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
-                        .. Default::default()
-                    }], &[]);
+                    &[], &[fe::BufferMemoryBarrier::new(&buf, 0 .. bufsize, fe::AccessFlags::TRANSFER.write,
+                        fe::AccessFlags::VERTEX_ATTRIBUTE_READ)], &[]);
             queue.submit(&[fe::SubmissionBatch
             {
                 command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
@@ -269,28 +257,26 @@ impl App
         };
         if surface_size.0 <= 0 || surface_size.1 <= 0 { return Ok(None); }
         let swapchain = fe::SwapchainBuilder::new(s, surface_caps.minImageCount.max(2),
-            surface_format.clone(), surface_size.clone(), fe::ImageUsage::COLOR_ATTACHMENT)
+            &surface_format, &surface_size, fe::ImageUsage::COLOR_ATTACHMENT)
                 .present_mode(surface_pm).pre_transform(fe::SurfaceTransform::Identity)
                 .composite_alpha(surface_ca).create(&f.device)?;
         // acquire_nextより前にやらないと死ぬ(get_images)
         let backbuffers = swapchain.get_images()?;
-        let isr = fe::ImageSubresourceRange
-        {
-            aspect_mask: fe::AspectMask::COLOR, mip_levels: 0 .. 1, array_layers: 0 .. 1
-        };
+        let isr = fe::ImageSubresourceRange::color(0, 0);
         let bb_views = backbuffers.iter().map(|i| i.create_view(None, None, &fe::ComponentMapping::default(), &isr))
             .collect::<fe::Result<Vec<_>>>()?;
 
         let rp = fe::RenderPassBuilder::new()
-            .add_attachment(fe::vk::VkAttachmentDescription
-            {
-                format: surface_format.format, samples: 1,
-                initialLayout: fe::ImageLayout::ColorAttachmentOpt as _, finalLayout: fe::ImageLayout::PresentSrc as _,
-                loadOp: fe::vk::VK_ATTACHMENT_LOAD_OP_CLEAR, storeOp: fe::vk::VK_ATTACHMENT_STORE_OP_STORE,
-                stencilLoadOp: fe::vk::VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-                stencilStoreOp: fe::vk::VK_ATTACHMENT_STORE_OP_DONT_CARE, flags: 0
-            })
+            .add_attachment(fe::AttachmentDescription::new(surface_format.format, fe::ImageLayout::PresentSrc, fe::ImageLayout::PresentSrc)
+                .load_op(fe::LoadOp::Clear).store_op(fe::StoreOp::Store))
             .add_subpass(fe::SubpassDescription::new().add_color_output(0, fe::ImageLayout::ColorAttachmentOpt, None))
+            .add_dependency(fe::vk::VkSubpassDependency
+            {
+                srcSubpass: fe::vk::VK_SUBPASS_EXTERNAL, dstSubpass: 0,
+                srcAccessMask: 0, dstAccessMask: fe::AccessFlags::COLOR_ATTACHMENT.write,
+                srcStageMask: fe::PipelineStageFlags::TOP_OF_PIPE.0, dstStageMask: fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT.0,
+                dependencyFlags: fe::vk::VK_DEPENDENCY_BY_REGION_BIT
+            })
             .create(&f.device).unwrap();
         let framebuffers = bb_views.iter().map(|iv| fe::Framebuffer::new(&rp, &[iv], &surface_size, 1))
             .collect::<fe::Result<Vec<_>>>()?;
@@ -299,15 +285,8 @@ impl App
         let init_commands = f.cmdpool.alloc(1, true).unwrap();
         init_commands[0].begin().unwrap()
             .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                true, &[], &[], &bb_views.iter().map(|iv| fe::vk::VkImageMemoryBarrier
-                {
-                    image: fe::VkHandle::native_ptr(&**iv), subresourceRange: fe::vk::VkImageSubresourceRange
-                    {
-                        aspectMask: fe::vk::VK_IMAGE_ASPECT_COLOR_BIT, .. Default::default()
-                    },
-                    oldLayout: fe::ImageLayout::Undefined as _, newLayout: fe::ImageLayout::PresentSrc as _,
-                    dstAccessMask: fe::vk::VK_ACCESS_MEMORY_READ_BIT, .. Default::default()
-                }).collect::<Vec<_>>());
+                true, &[], &[], &bb_views.iter().map(|iv| fe::ImageMemoryBarrier::new(&fe::ImageSubref::color(&iv, 0, 0),
+                    fe::ImageLayout::Undefined, fe::ImageLayout::PresentSrc)).collect::<Vec<_>>());
         f.queue.submit(&[fe::SubmissionBatch
         {
             command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
@@ -320,32 +299,22 @@ impl App
     }
     fn populate_render_commands(&self) -> fe::Result<RenderCommands>
     {
-        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-        let rtvr = self.rendertargets.borrow(); let rtvs = rtvr.as_ref().unwrap();
-        let resr = self.res.borrow(); let res = resr.as_ref().unwrap();
-        let rdsr = self.rtdres.borrow(); let rds = rdsr.as_ref().unwrap();
+        let f = Ref::map(self.ferrite.borrow(), |f| f.as_ref().unwrap());
+        let rtvs = Ref::map(self.rendertargets.borrow(), |r| r.as_ref().unwrap());
+        let res = Ref::map(self.res.borrow(), |r| r.as_ref().unwrap());
+        let rds = Ref::map(self.rtdres.borrow(), |r| r.as_ref().unwrap());
 
         let render_commands = f.cmdpool.alloc(rtvs.framebuffers.len() as _, true)?;
         for ((c, fb), iv) in render_commands.iter().zip(&rtvs.framebuffers).zip(&rtvs.backbuffers)
         {
+            let subref = fe::ImageSubref::color(&iv, 0, 0);
             c.begin()?
-                .pipeline_barrier(fe::PipelineStageFlags::TOP_OF_PIPE, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    true, &[], &[], &[fe::vk::VkImageMemoryBarrier
-                    {
-                        image: fe::VkHandle::native_ptr(&**iv), subresourceRange: fe::vk::VkImageSubresourceRange
-                        {
-                            aspectMask: fe::vk::VK_IMAGE_ASPECT_COLOR_BIT, .. Default::default()
-                        },
-                        oldLayout: fe::ImageLayout::PresentSrc as _, newLayout: fe::ImageLayout::ColorAttachmentOpt as _,
-                        srcAccessMask: fe::vk::VK_ACCESS_MEMORY_READ_BIT, dstAccessMask: fe::vk::VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-                        .. Default::default()
-                    }])
                 .begin_render_pass(&rtvs.renderpass, fb, fe::vk::VkRect2D
                 {
                     offset: fe::vk::VkOffset2D { x: 0, y: 0 },
                     extent: fe::vk::VkExtent2D { width: rtvs.size.0, height: rtvs.size.1 }
                 }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 0.5])], true)
-                    .bind_graphics_pipeline(&rds.gp, &res.pl)
+                    .bind_graphics_pipeline_pair(&rds.gp, &res.pl)
                     .bind_vertex_buffers(0, &[(&res.buf, 0)]).draw(3, 1, 0, 0)
                 .end_render_pass();
         }
@@ -392,17 +361,13 @@ impl RenderTargetDependentResources
             offset: fe::vk::VkOffset2D { x: 0, y: 0 },
             extent: fe::vk::VkExtent2D { width: vp.width as _, height: vp.height as _ }
         };
-        let gp = fe::GraphicsPipelineBuilder::new(&res.pl, (&rtvs.renderpass, 0))
-            .vertex_processing(fe::PipelineShader::new(&res.shaders.v_pass, "main", None), VBIND, VATTRS)
-            .fragment_shader(fe::PipelineShader::new(&res.shaders.f_phong, "main", None))
-            .primitive_topology(fe::vk::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false)
+        let mut gpb = fe::GraphicsPipelineBuilder::new(&res.pl, (&rtvs.renderpass, 0));
+        let mut vps = fe::VertexProcessingStages::new(fe::PipelineShader::new(&res.shaders.v_pass, "main", None),
+            VBIND, VATTRS, fe::vk::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        vps.fragment_shader(fe::PipelineShader::new(&res.shaders.f_phong, "main", None));
+        let gp = gpb.vertex_processing(vps)
             .fixed_viewport_scissors(fe::DynamicArrayState::Static(&[vp]), fe::DynamicArrayState::Static(&[scis]))
-            .rasterization_samples(1, vec![])
-            .add_attachment_blend(fe::vk::VkPipelineColorBlendAttachmentState
-            {
-                colorWriteMask: fe::vk::VK_COLOR_COMPONENT_A_BIT | fe::vk::VK_COLOR_COMPONENT_B_BIT |
-                    fe::vk::VK_COLOR_COMPONENT_G_BIT | fe::vk::VK_COLOR_COMPONENT_R_BIT, .. Default::default()
-            }).create(device, None)?;
+            .add_attachment_blend(fe::AttachmentColorBlendState::noblend()).create(device, None)?;
         
         Ok(RenderTargetDependentResources { gp })
     }
