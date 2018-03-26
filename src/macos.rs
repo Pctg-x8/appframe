@@ -287,7 +287,8 @@ impl<E: EventDelegate + 'static> FeRenderableView<E>
         extern fn make_backing_layer(this: &Object, _sel: Sel) -> objc_id
         {
             let this: &NSView = unsafe { transmute(this) };
-            let layer = CAMetalLayer::layer().expect("Creating CAMetalLayer");
+            let layer = if let Ok(l) = CAMetalLayer::layer() { l }
+                else { println!("Failed to create CAMetalLayer"); panic!("Creating CAMetalLayer"); };
             let view_scale = this.convert_size_to_backing(&NSSize { width: 1.0, height: 1.0 });
             layer.set_contents_scale(view_scale.width.min(view_scale.height));
             #[cfg(feature = "manual_rendering")] layer.set_needs_display_on_bounds_change(true);
@@ -366,7 +367,7 @@ impl<E: EventDelegate + 'static> FeRenderableViewController<E>
             {
                 ivar server_ptr: usize;
                 ivar initial_frame_size: NSRect;
-                - loadView = Self::load_view;
+                - mut loadView = Self::load_view;
                 - mut viewDidLoad = Self::view_did_load;
                 #[cfg(not(feature = "manual_rendering"))]
                 ivar dp_link_instance: usize;
@@ -412,14 +413,15 @@ impl<E: EventDelegate + 'static> FeRenderableViewController<E>
     }
     fn view(&self) -> &FeRenderableView<E> { unsafe { transmute(self.deref().view().unwrap()) } }
     fn view_mut(&mut self) -> &mut FeRenderableView<E> { unsafe { transmute(self.deref_mut().view_mut().unwrap()) } }
-    extern fn load_view(this: &Object, _sel: Sel)
+    extern fn load_view(this: &mut Object, _sel: Sel)
     {
         let fsize = unsafe { this.get_ivar::<NSRect>("initial_frame_size") };
         let srv: &Rc<GUIApplication<E>> = unsafe { retrieve_ptr(this, "server_ptr") };
         let mut view = FeRenderableView::new(srv).expect("Failed to create Renderable View");
 
         view.set_frame(fsize);
-        view.layer_mut().unwrap().set_frame(fsize.clone());
+        /*if let Some(l) = view.layer_mut() { l.set_frame(fsize.clone()); }
+            else { println!("Null Layer"); }*/
         let _: () = unsafe { msg_send![this, setView: view.id()] };
     }
     extern fn view_did_load(this: &mut Object, _sel: Sel)
