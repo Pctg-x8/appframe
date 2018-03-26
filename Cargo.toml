@@ -19,6 +19,8 @@ xcb = { version = "0.8", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+appkit = { git = "https://github.com/Pctg-x8/appkit-rs" }
+appkit-derive = { git = "https://github.com/Pctg-x8/appkit-rs" }
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "rpc", "rpcdce", "libloaderapi"] }

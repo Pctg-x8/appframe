@@ -1,10 +1,10 @@
 
-#[cfg(target_os = "macos")] #[macro_use] extern crate bitflags;
 extern crate libc;
 #[cfg(feature = "with_ferrite")] extern crate ferrite;
 
 #[cfg(target_os = "macos")] #[macro_use] extern crate objc;
-#[cfg(target_os = "macos")] #[macro_use] mod appkit;
+#[cfg(target_os = "macos")] extern crate appkit;
+#[cfg(target_os = "macos")] #[macro_use] extern crate appkit_derive;
 #[cfg(target_os = "macos")] mod macos;
 #[cfg(target_os = "macos")] pub use macos::{GUIApplication, NativeWindow, NativeView, NativeWindowBuilder};
 
@@ -33,7 +33,7 @@ pub trait Window
 {
     fn show(&self);
     #[cfg(feature = "with_ferrite")]
-    fn mark_dirty(&self);
+    fn mark_dirty(&mut self);
 }
 pub trait WindowBuilder<'c> : Sized
 {
