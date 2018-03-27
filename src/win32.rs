@@ -85,7 +85,7 @@ impl<E: EventDelegate> Window for NativeWindow<E>
 {
     fn show(&self) { unsafe { ShowWindow(self.h, SW_SHOWNORMAL); } }
     #[cfg(feature = "with_ferrite")]
-    fn mark_dirty(&self) { unsafe { InvalidateRect(self.h, null(), false as _); } }
+    fn mark_dirty(&mut self) { unsafe { InvalidateRect(self.h, null(), false as _); } }
 }
 pub type NativeView<E> = NativeWindow<E>;
 
