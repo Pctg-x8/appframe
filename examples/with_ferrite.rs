@@ -8,7 +8,7 @@ extern crate libc;
 use appframe::*;
 use ferrite as fe;
 use fe::traits::*;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::cell::{RefCell, Ref};
 use std::borrow::Cow;
 
@@ -43,6 +43,7 @@ impl<T> LazyInit<T> {
     pub fn new() -> Self { LazyInit(None.into()) }
     pub fn init(&self, v: T) { *self.0.borrow_mut() = v.into(); }
     pub fn get(&self) -> Ref<T> { Ref::map(self.0.borrow(), |v| v.as_ref().unwrap()) }
+    pub fn is_presented(&self) -> bool { self.0.borrow().is_some() }
     // pub fn get_mut(&self) -> RefMut<T> { RefMut::map(self.0.borrow_mut(), |v| v.as_mut().unwrap()) }
 }
 pub struct Discardable<T>(RefCell<Option<T>>);
@@ -186,12 +187,12 @@ struct MainWindow {
     commands: Discardable<RenderCommands>, rts: Discardable<WindowRenderTargets>,
     render_res: LazyInit<RenderResources>, surface: LazyInit<DescribedSurface>,
     window: LazyInit<NativeWindow<MainWindow>>,
-    ferrite: Rc<Ferrite>, comres: Rc<Resources>
+    ferrite: Rc<Ferrite>, comres: Rc<Resources>, app: Weak<GUIApplication<App>>
 }
 impl MainWindow {
     pub fn new(srv: &Rc<GUIApplication<App>>) -> Rc<Self> {
         let w = Rc::new(MainWindow {
-            ferrite: srv.event_delegate().ferrite.get().clone(),
+            app: Rc::downgrade(srv), ferrite: srv.event_delegate().ferrite.get().clone(),
             comres: srv.event_delegate().res.get().clone(),
             window: LazyInit::new(), surface: LazyInit::new(), render_res: LazyInit::new(),
             rts: Discardable::new(), commands: Discardable::new()
@@ -205,7 +206,9 @@ impl MainWindow {
 impl WindowEventDelegate for MainWindow {
     type ClientDelegate = App;
 
-    fn init_view(&self, server: &GUIApplication<App>, view: &NativeView<Self>) {
+    fn init_view(&self, view: &NativeView<Self>) {
+        let server = self.app.upgrade().unwrap();
+
         if !server.presentation_support(&self.ferrite.adapter, self.ferrite.gq) {
             panic!("Vulkan Rendering is not supported by platform");
         }
@@ -224,7 +227,7 @@ impl WindowEventDelegate for MainWindow {
         let rts = WindowRenderTargets::new(&self.ferrite, &self.render_res.get(), &self.surface.get()).unwrap();
         if let Some(r) = rts { self.rts.set(r); } else { return; }
         self.commands.set(RenderCommands::populate(&self.ferrite, &self.comres, &self.rts.get(), &self.render_res.get()).unwrap());
-        self.window.get().mark_dirty();
+        if self.window.is_presented() { self.window.get().mark_dirty(); }
     }
     fn render(&self) {
         if self.rts.is_discarded() {

@@ -74,7 +74,7 @@ pub trait WindowEventDelegate : Sized
 {
     type ClientDelegate: EventDelegate;
 
-    fn init_view(&self, _server: &GUIApplication<Self::ClientDelegate>, _view: &NativeView<Self>) { }
+    fn init_view(&self, _view: &NativeView<Self>) { }
     fn render(&self) { }
     fn resize(&self, _width: u32, _height: u32) { }
 }
