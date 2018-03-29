@@ -110,7 +110,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         self
     }
 
-    fn create<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
+    fn create<WE: WindowEventDelegate>(&self, _server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
         -> IOResult<NativeWindow<WE>>
     {
         let cname = UniqueString::generate();
@@ -134,7 +134,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         };
         if hw.is_null() { return Err(IOError::last_os_error()); }
 
-        let controller = NativeWindowController::new(server, event)?;
+        let controller = NativeWindowController::new(event)?;
         unsafe { SetWindowLongPtr(hw, GWL_USERDATA, (&*controller.callbox) as *const _ as LONG_PTR); }
         return Ok(NativeWindow { handle: hw, controller });
     }
@@ -143,7 +143,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         -> IOResult<NativeWindow<WE>> where WE::ClientDelegate: 'static
     {
         let mut w = self.create(server, event)?;
-        w.controller.callbox.w.upgrade().unwrap().init_view(&server, &w);
+        w.controller.callbox.w.upgrade().unwrap().init_view(&w);
         return Ok(w);
     }
 }
@@ -172,7 +172,7 @@ struct NativeWindowController<WE: WindowEventDelegate> {
 }
 impl<WE: WindowEventDelegate> NativeWindowController<WE> {
     #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
-    pub fn new(_server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>) -> IOResult<Self> {
+    pub fn new(event: &Rc<WE>) -> IOResult<Self> {
         let mut timer = uianimation::Timer::new()?;
         let update_handler = UpdateTimerHandlerCell(UpdateTimerHandler::create(srv));
         timer.set_update_handler(Some(&update_handler), uianimation::IdleBehavior::Disable)?;
@@ -183,7 +183,7 @@ impl<WE: WindowEventDelegate> NativeWindowController<WE> {
         });
     }
     #[cfg(any(not(feature = "with_ferrite"), feature = "manual_rendering"))]
-    pub fn new(_server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>) -> IOResult<Self> {
+    pub fn new(event: &Rc<WE>) -> IOResult<Self> {
         Ok(NativeWindowController { callbox: Box::new(CallbackSet { w: Rc::downgrade(event) }) })
     }
 
