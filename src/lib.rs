@@ -76,7 +76,7 @@ pub trait WindowEventDelegate : Sized
 
     fn init_view(&self, _view: &NativeView<Self>) { }
     fn render(&self) { }
-    fn resize(&self, _width: u32, _height: u32) { }
+    fn resize(&self, _width: u32, _height: u32, _in_live_resize: bool) { }
 }
 
 pub struct EmptyWindowEventDelegate<E: EventDelegate>(std::marker::PhantomData<Rc<E>>);

@@ -222,12 +222,14 @@ impl WindowEventDelegate for MainWindow {
         let rc = RenderCommands::populate(&self.ferrite, &self.comres, &wrt, &rr).unwrap();
         self.commands.set(rc); self.rts.set(wrt); self.render_res.init(rr); self.surface.init(s);
     }
-    fn resize(&self, _w: u32, _h: u32) {
-        self.commands.discard(); self.rts.discard();
-        let rts = WindowRenderTargets::new(&self.ferrite, &self.render_res.get(), &self.surface.get()).unwrap();
-        if let Some(r) = rts { self.rts.set(r); } else { return; }
-        self.commands.set(RenderCommands::populate(&self.ferrite, &self.comres, &self.rts.get(), &self.render_res.get()).unwrap());
-        if self.window.is_presented() { self.window.get().mark_dirty(); }
+    fn resize(&self, _w: u32, _h: u32, is_in_live_resize: bool) {
+        if !is_in_live_resize {
+            self.commands.discard(); self.rts.discard();
+            let rts = WindowRenderTargets::new(&self.ferrite, &self.render_res.get(), &self.surface.get()).unwrap();
+            if let Some(r) = rts { self.rts.set(r); } else { return; }
+            self.commands.set(RenderCommands::populate(&self.ferrite, &self.comres, &self.rts.get(), &self.render_res.get()).unwrap());
+            if self.window.is_presented() { self.window.get().mark_dirty(); }
+        }
     }
     fn render(&self) {
         if self.rts.is_discarded() {

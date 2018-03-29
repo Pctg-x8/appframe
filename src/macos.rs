@@ -285,6 +285,7 @@ pub struct FeRenderableView<WE: WindowEventDelegate>(Object, PhantomData<(Weak<G
                 #[cfg(feature = "manual_rendering")]
                 - displayLayer:(objc_id) = Self::display_layer;
                 - setFrameSize:(NSSize) = Self::set_frame_size;
+                - viewDidEndLiveResize = Self::did_end_live_resize;
             }
         })
     }
@@ -326,9 +327,19 @@ pub struct FeRenderableView<WE: WindowEventDelegate>(Object, PhantomData<(Weak<G
                 let _: () = msg_send![layer, setFrame: rect.clone()];
                 let _: () = msg_send![layer, setBounds: rect];
 
+                let is_in_live_resize: BOOL = msg_send![this, inLiveResize];
+
                 retrieve_ptr::<Weak<WE>>(this, "event_delegate").upgrade().unwrap()
-                    .resize(size.width as _, size.height as _);
+                    .resize(size.width as _, size.height as _, is_in_live_resize == YES);
             }
+        }
+    }
+    extern fn did_end_live_resize(this: &Object, _sel: Sel) {
+        unsafe {
+            let _: () = msg_send![super(this, Class::get("NSView").unwrap()), viewDidEndLiveResize];
+            let frame: NSRect = msg_send![this, frame];
+            retrieve_ptr::<Weak<WE>>(this, "event_delegate").upgrade().unwrap()
+                .resize(frame.size.width as _, frame.size.height as _, false);
         }
     }
 }
