@@ -206,7 +206,7 @@ impl<WE: WindowEventDelegate> NativeWindowController<WE> {
                 return 0;
             },
             WM_SIZE => if let Some(cb) = unsafe { Self::extract_callset_ref(hwnd).w.upgrade() } {
-                cb.resize(LOWORD(lp as _) as _, HIWORD(lp as _) as _);
+                cb.resize(LOWORD(lp as _) as _, HIWORD(lp as _) as _, false);
             },
             _ => (/* nothing to do */)
         }
