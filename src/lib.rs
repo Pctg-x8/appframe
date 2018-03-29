@@ -22,18 +22,20 @@ use std::io::Result as IOResult;
 pub trait GUIApplicationRunner<E: EventDelegate>
 {
     fn run(delegate: E) -> i32;
+    fn event_delegate(&self) -> &E;
 }
 #[cfg(feature = "with_ferrite")]
-pub trait FerriteRenderingServer<E: EventDelegate>
+pub trait FerriteRenderingServer
 {
     fn presentation_support(&self, adapter: &ferrite::PhysicalDevice, rendered_qf: u32) -> bool;
-    fn create_surface(&self, w: &NativeView<E>, instance: &ferrite::Instance) -> ferrite::Result<ferrite::Surface>;
+    fn create_surface<WE: WindowEventDelegate>(&self, w: &NativeView<WE>, instance: &ferrite::Instance)
+        -> ferrite::Result<ferrite::Surface>;
 }
 pub trait Window
 {
     fn show(&self);
     #[cfg(feature = "with_ferrite")]
-    fn mark_dirty(&mut self);
+    fn mark_dirty(&self);
 }
 pub trait WindowBuilder<'c> : Sized
 {
@@ -46,10 +48,12 @@ pub trait WindowBuilder<'c> : Sized
     fn transparent(&mut self, c: bool) -> &mut Self;
 
     /// Create a window
-    fn create<E: EventDelegate>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
+    fn create<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
+        -> IOResult<NativeWindow<WE>>;
     #[cfg(feature = "with_ferrite")]
     /// Create a Renderable window
-    fn create_renderable<E: EventDelegate + 'static>(&self, server: &Rc<GUIApplication<E>>) -> IOResult<NativeWindow<E>>;
+    fn create_renderable<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
+        -> IOResult<NativeWindow<WE>> where WE::ClientDelegate: 'static;
 }
 
 pub trait EventDelegate : Sized
@@ -57,9 +61,30 @@ pub trait EventDelegate : Sized
     fn postinit(&self, _server: &Rc<GUIApplication<Self>>) { }
     fn on_activated(&self, _server: &Rc<GUIApplication<Self>>) { }
 
+    /*
     #[cfg(feature = "with_ferrite")]
     fn on_init_view(&self, _server: &GUIApplication<Self>, _surface_onto: &NativeView<Self>) { }
 
     #[cfg(feature = "with_ferrite")]
     fn on_render_period(&self) {}
+    */
+}
+
+pub trait WindowEventDelegate : Sized
+{
+    type ClientDelegate: EventDelegate;
+
+    fn init_view(&self, _server: &GUIApplication<Self::ClientDelegate>, _view: &NativeView<Self>) { }
+    fn render(&self) { }
+    fn resize(&self, _width: u32, _height: u32) { }
+}
+
+pub struct EmptyWindowEventDelegate<E: EventDelegate>(std::marker::PhantomData<Rc<E>>);
+impl<E: EventDelegate> Default for EmptyWindowEventDelegate<E>
+{
+    fn default() -> Self { EmptyWindowEventDelegate(std::marker::PhantomData) }
+}
+impl<E: EventDelegate> WindowEventDelegate for EmptyWindowEventDelegate<E>
+{
+    type ClientDelegate = E;
 }

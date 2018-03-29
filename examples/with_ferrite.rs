@@ -14,14 +14,9 @@ use std::borrow::Cow;
 
 #[repr(C)] #[derive(Clone)] pub struct Vertex([f32; 4], [f32; 4]);
 
-struct ShaderStore
-{
-    v_pass: fe::ShaderModule, f_phong: fe::ShaderModule
-}
-impl ShaderStore
-{
-    fn load(device: &fe::Device) -> Result<Self, Box<std::error::Error>>
-    {
+struct ShaderStore { v_pass: fe::ShaderModule, f_phong: fe::ShaderModule }
+impl ShaderStore {
+    fn load(device: &fe::Device) -> Result<Self, Box<std::error::Error>> {
         Ok(ShaderStore
         {
             v_pass: fe::ShaderModule::from_file(device, "shaders/pass.vso")?,
@@ -30,60 +25,53 @@ impl ShaderStore
     }
 }
 const VBIND: &[fe::vk::VkVertexInputBindingDescription] = &[
-    fe::vk::VkVertexInputBindingDescription
-    {
+    fe::vk::VkVertexInputBindingDescription {
         binding: 0, stride: 16 * 2, inputRate: fe::vk::VK_VERTEX_INPUT_RATE_VERTEX
     }
 ];
 const VATTRS: &[fe::vk::VkVertexInputAttributeDescription] = &[
-    fe::vk::VkVertexInputAttributeDescription
-    {
+    fe::vk::VkVertexInputAttributeDescription {
         binding: 0, location: 0, offset: 0, format: fe::vk::VK_FORMAT_R32G32B32A32_SFLOAT
     },
-    fe::vk::VkVertexInputAttributeDescription
-    {
+    fe::vk::VkVertexInputAttributeDescription {
         binding: 0, location: 1, offset: 16, format: fe::vk::VK_FORMAT_R32G32B32A32_SFLOAT
     }
 ];
 
-struct App
-{
-    rcmds: RefCell<Option<RenderCommands>>,
-    rtdres: RefCell<Option<RenderTargetDependentResources>>,
-    rendertargets: RefCell<Option<WindowRenderTargets>>,
-    surface: RefCell<Option<fe::Surface>>,
-    res: RefCell<Option<Resources>>,
-    ferrite: RefCell<Option<Ferrite>>,
-    w: RefCell<Option<NativeWindow<App>>>
+pub struct LazyInit<T>(RefCell<Option<T>>);
+impl<T> LazyInit<T> {
+    pub fn new() -> Self { LazyInit(None.into()) }
+    pub fn init(&self, v: T) { *self.0.borrow_mut() = v.into(); }
+    pub fn get(&self) -> Ref<T> { Ref::map(self.0.borrow(), |v| v.as_ref().unwrap()) }
+    // pub fn get_mut(&self) -> RefMut<T> { RefMut::map(self.0.borrow_mut(), |v| v.as_mut().unwrap()) }
 }
-pub struct Ferrite
-{
+pub struct Discardable<T>(RefCell<Option<T>>);
+impl<T> Discardable<T> {
+    pub fn new() -> Self { Discardable(None.into()) }
+    pub fn set(&self, v: T) { *self.0.borrow_mut() = v.into(); }
+    pub fn get(&self) -> Ref<T> { Ref::map(self.0.borrow(), |v| v.as_ref().unwrap()) }
+
+    pub fn discard(&self) { *self.0.borrow_mut() = None; }
+    pub fn is_discarded(&self) -> bool { self.0.borrow().is_none() }
+}
+
+pub struct Ferrite {
     gq: u32, _tq: u32, queue: fe::Queue, tqueue: fe::Queue, cmdpool: fe::CommandPool, tcmdpool: fe::CommandPool,
     semaphore_sync_next: fe::Semaphore, semaphore_command_completion: fe::Semaphore,
     fence_command_completion: fe::Fence,
     device: fe::Device, adapter: fe::PhysicalDevice, _d: fe::DebugReportCallback, instance: fe::Instance
 }
-pub struct Resources
-{
+pub struct Resources {
     buf: fe::Buffer, _dmem: fe::DeviceMemory, pl: fe::PipelineLayout, shaders: ShaderStore
 }
-pub struct RenderCommands(Vec<fe::CommandBuffer>);
-impl App
-{
-    fn new() -> Self
-    {
-        App
-        {
-            w: RefCell::new(None), ferrite: RefCell::new(None),
-            rcmds: RefCell::new(None), surface: RefCell::new(None), rendertargets: RefCell::new(None),
-            res: RefCell::new(None), rtdres: RefCell::new(None)
-        }
+struct App { main_wnd: LazyInit<Rc<MainWindow>>, res: LazyInit<Rc<Resources>>, ferrite: LazyInit<Rc<Ferrite>> }
+impl App {
+    fn new() -> Self {
+        App { main_wnd: LazyInit::new(), ferrite: LazyInit::new(), res: LazyInit::new() }
     }
 }
-impl EventDelegate for App
-{
-    fn postinit(&self, server: &Rc<GUIApplication<Self>>)
-    {
+impl EventDelegate for App {
+    fn postinit(&self, server: &Rc<GUIApplication<Self>>) {
         extern "system" fn dbg_cb(_flags: fe::vk::VkDebugReportFlagsEXT, _object_type: fe::vk::VkDebugReportObjectTypeEXT,
             _object: u64, _location: libc::size_t, _message_code: i32, _layer_prefix: *const libc::c_char,
             message: *const libc::c_char, _user_data: *mut libc::c_void) -> fe::vk::VkBool32
@@ -154,132 +142,159 @@ impl EventDelegate for App
                 command_buffers: Cow::Borrowed(&init_commands), .. Default::default()
             }], Some(&fw)).unwrap(); fw.wait().unwrap();
         }
-        *self.res.borrow_mut() = Some(Resources
-        {
+        self.res.init(Rc::new(Resources {
             shaders: ShaderStore::load(&device).unwrap(),
             pl: fe::PipelineLayout::new(&device, &[], &[]).unwrap(), buf, _dmem: dmem
-        });
-
-        *self.ferrite.borrow_mut() = Some(Ferrite
-        {
+        }));
+        self.ferrite.init(Rc::new(Ferrite {
             fence_command_completion: fe::Fence::new(&device, false).unwrap(),
             semaphore_sync_next: fe::Semaphore::new(&device).unwrap(),
             semaphore_command_completion: fe::Semaphore::new(&device).unwrap(),
             tcmdpool: fe::CommandPool::new(&device, tq, false, false).unwrap(),
             cmdpool, queue, tqueue: device.queue(tq, if united_queue { 1 } else { 0 }),
             device, adapter, instance, gq, _tq: tq, _d: d
-        });
+        }));
 
-        let w = NativeWindowBuilder::new(640, 360, "Ferrite integration").transparent(true)
-            .create_renderable(server).unwrap();
-        *self.w.borrow_mut() = Some(w);
-        self.w.borrow().as_ref().unwrap().show();
-    }
-    fn on_init_view(&self, server: &GUIApplication<Self>, surface_onto: &NativeView<Self>)
-    {
-        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-
-        if !server.presentation_support(&f.adapter, f.gq) { panic!("Vulkan Rendering is not supported by platform"); }
-        let surface = server.create_surface(surface_onto, &f.instance).unwrap();
-        if !f.adapter.surface_support(f.gq, &surface).unwrap() { panic!("Vulkan Rendering is not supported to this surface"); }
-        *self.surface.borrow_mut() = Some(surface);
-        let rtvs = self.init_swapchains().unwrap().unwrap();
-        *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device,
-            self.res.borrow().as_ref().unwrap(), &rtvs).unwrap());
-        *self.rendertargets.borrow_mut() = Some(rtvs);
-        *self.rcmds.borrow_mut() = Some(self.populate_render_commands().unwrap());
-    }
-    fn on_render_period(&self)
-    {
-        if self.ensure_render_targets().unwrap()
-        {
-            if let Err(e) = self.render()
-            {
-                if e.0 == fe::vk::VK_ERROR_OUT_OF_DATE_KHR
-                {
-                    // Require to recreate resources(discarding resources)
-                    let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-
-                    f.fence_command_completion.wait().unwrap(); f.fence_command_completion.reset().unwrap();
-                    *self.rcmds.borrow_mut() = None;
-                    *self.rtdres.borrow_mut() = None;
-                    *self.rendertargets.borrow_mut() = None;
-
-                    // reissue rendering
-                    self.on_render_period();
-                }
-                else { let e: fe::Result<()> = Err(e); e.unwrap(); }
-            }
-        }
+        let w = MainWindow::new(server); w.window.get().show();
+        self.main_wnd.init(w);
     }
 }
-impl App
-{
-    fn ensure_render_targets(&self) -> fe::Result<bool>
-    {
-        if self.rendertargets.borrow().is_none()
-        {
-            let rtv = self.init_swapchains()?;
-            if rtv.is_none() { return Ok(false); }
-            *self.rendertargets.borrow_mut() = rtv;
-        }
-        if self.rtdres.borrow().is_none()
-        {
-            let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-            let resr = self.res.borrow(); let res = resr.as_ref().unwrap();
-            *self.rtdres.borrow_mut() = Some(RenderTargetDependentResources::new(&f.device, res,
-                self.rendertargets.borrow().as_ref().unwrap())?);
-        }
-        if self.rcmds.borrow().is_none()
-        {
-            *self.rcmds.borrow_mut() = Some(self.populate_render_commands().unwrap());
-        }
-        Ok(true)
-    }
-    fn init_swapchains(&self) -> fe::Result<Option<WindowRenderTargets>>
-    {
-        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-        let sr = self.surface.borrow(); let s = sr.as_ref().unwrap();
 
-        let surface_caps = f.adapter.surface_capabilities(s)?;
-        let surface_format = f.adapter.surface_formats(s)?.into_iter()
-            .find(|f| fe::FormatQuery(f.format).eq_bit_width(32).is_component_of(fe::FormatComponents::RGBA).has_element_of(fe::ElementType::UNORM).passed()).unwrap();
-        let surface_pm = f.adapter.surface_present_modes(s)?.remove(0);
-        let surface_ca = if (surface_caps.supportedCompositeAlpha & fe::CompositeAlpha::PostMultiplied as u32) != 0
+pub struct DescribedSurface {
+    object: fe::Surface, format: fe::vk::VkSurfaceFormatKHR, present_mode: fe::PresentMode,
+    composite_mode: fe::CompositeAlpha, buffer_count: u32
+}
+impl DescribedSurface {
+    pub fn from(adapter: &fe::PhysicalDevice, s: fe::Surface) -> fe::Result<Self> {
+        let caps = adapter.surface_capabilities(&s)?;
+        let mut fmtq = fe::FormatQueryPred::new();
+        fmtq.bit(32).components(fe::FormatComponents::RGBA).elements(fe::ElementType::UNORM);
+        let format = adapter.surface_formats(&s)?.into_iter().find(|f| fmtq.satisfy(f.format)).unwrap();
+        let present_mode = adapter.surface_present_modes(&s)?.remove(0);
+        let composite_mode = if (caps.supportedCompositeAlpha & fe::CompositeAlpha::PostMultiplied as u32) != 0
         {
             fe::CompositeAlpha::PostMultiplied
         }
         else { fe::CompositeAlpha::Opaque };
-        let surface_size = match surface_caps.currentExtent
+        let buffer_count = caps.minImageCount.max(2);
+
+        return Ok(DescribedSurface { object: s, format, present_mode, composite_mode, buffer_count })
+    }
+}
+
+struct MainWindow {
+    commands: Discardable<RenderCommands>, rts: Discardable<WindowRenderTargets>,
+    render_res: LazyInit<RenderResources>, surface: LazyInit<DescribedSurface>,
+    window: LazyInit<NativeWindow<MainWindow>>,
+    ferrite: Rc<Ferrite>, comres: Rc<Resources>
+}
+impl MainWindow {
+    pub fn new(srv: &Rc<GUIApplication<App>>) -> Rc<Self> {
+        let w = Rc::new(MainWindow {
+            ferrite: srv.event_delegate().ferrite.get().clone(),
+            comres: srv.event_delegate().res.get().clone(),
+            window: LazyInit::new(), surface: LazyInit::new(), render_res: LazyInit::new(),
+            rts: Discardable::new(), commands: Discardable::new()
+        });
+        let nw = NativeWindowBuilder::new(640, 360, "Ferrite integration").transparent(true)
+            .create_renderable(srv, &w).unwrap();
+        w.window.init(nw);
+        return w;
+    }
+}
+impl WindowEventDelegate for MainWindow {
+    type ClientDelegate = App;
+
+    fn init_view(&self, server: &GUIApplication<App>, view: &NativeView<Self>) {
+        if !server.presentation_support(&self.ferrite.adapter, self.ferrite.gq) {
+            panic!("Vulkan Rendering is not supported by platform");
+        }
+        let surface = server.create_surface(view, &self.ferrite.instance).unwrap();
+        if !self.ferrite.adapter.surface_support(self.ferrite.gq, &surface).unwrap() {
+            panic!("Vulkan Rendering is not supported to this surface");
+        }
+        let s = DescribedSurface::from(&self.ferrite.adapter, surface).unwrap();
+        let rr = RenderResources::new(&self.ferrite.device, &self.comres, &s).unwrap();
+        let wrt = WindowRenderTargets::new(&self.ferrite, &rr, &s).unwrap().expect("Initially hidden surface");
+        let rc = RenderCommands::populate(&self.ferrite, &self.comres, &wrt, &rr).unwrap();
+        self.commands.set(rc); self.rts.set(wrt); self.render_res.init(rr); self.surface.init(s);
+    }
+    fn resize(&self, _w: u32, _h: u32) {
+        self.commands.discard(); self.rts.discard();
+        let rts = WindowRenderTargets::new(&self.ferrite, &self.render_res.get(), &self.surface.get()).unwrap();
+        if let Some(r) = rts { self.rts.set(r); } else { return; }
+        self.commands.set(RenderCommands::populate(&self.ferrite, &self.comres, &self.rts.get(), &self.render_res.get()).unwrap());
+        self.window.get().mark_dirty();
+    }
+    fn render(&self) {
+        if self.rts.is_discarded() {
+            let rts = WindowRenderTargets::new(&self.ferrite, &self.render_res.get(), &self.surface.get()).unwrap();
+            if let Some(r) = rts { self.rts.set(r); } else { return; }
+        }
+        if self.commands.is_discarded() {
+            self.commands.set(RenderCommands::populate(&self.ferrite, &self.comres, &self.rts.get(), &self.render_res.get()).unwrap());
+        }
+
+        match self.commit_frame() {
+            Err(fe::VkResultBox(fe::vk::VK_ERROR_OUT_OF_DATE_KHR)) => {
+                // Require to recreate resources(discarding resources)
+                self.ferrite.fence_command_completion.wait().unwrap();
+                self.ferrite.fence_command_completion.reset().unwrap();
+                self.commands.discard(); self.rts.discard();
+
+                // reissue rendering
+                self.render();
+            },
+            r => r.expect("Committing a frame")
+        }
+    }
+}
+impl MainWindow {
+    fn commit_frame(&self) -> fe::Result<()>
+    {
+        let (wrt, commands) = (self.rts.get(), self.commands.get());
+
+        let next = wrt.swapchain.acquire_next(None, fe::CompletionHandler::Device(&self.ferrite.semaphore_sync_next))?
+            as usize;
+        self.ferrite.queue.submit(&[fe::SubmissionBatch
         {
+            command_buffers: Cow::Borrowed(&commands.0[next..next+1]),
+            wait_semaphores: Cow::Borrowed(&[(&self.ferrite.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
+            signal_semaphores: Cow::Borrowed(&[&self.ferrite.semaphore_command_completion])
+        }], Some(&self.ferrite.fence_command_completion))?;
+        self.ferrite.queue.present(&[(&wrt.swapchain, next as _)], &[&self.ferrite.semaphore_command_completion])?;
+        // コマンドバッファの使用が終了したことを明示する
+        self.ferrite.fence_command_completion.wait()?; self.ferrite.fence_command_completion.reset()?;
+        return Ok(());
+    }
+}
+struct WindowRenderTargets
+{
+    framebuffers: Vec<fe::Framebuffer>, backbuffers: Vec<fe::ImageView>,
+    swapchain: fe::Swapchain, size: fe::Extent2D
+}
+impl WindowRenderTargets {
+    fn new(f: &Ferrite, res: &RenderResources, surface: &DescribedSurface) -> fe::Result<Option<Self>> {
+        let surface_caps = f.adapter.surface_capabilities(&surface.object)?;
+        let surface_size = match surface_caps.currentExtent {
             fe::vk::VkExtent2D { width: 0xffff_ffff, height: 0xffff_ffff } => fe::Extent2D(640, 360),
             fe::vk::VkExtent2D { width, height } => fe::Extent2D(width, height)
         };
         if surface_size.0 <= 0 || surface_size.1 <= 0 { return Ok(None); }
-        let swapchain = fe::SwapchainBuilder::new(s, surface_caps.minImageCount.max(2),
-            &surface_format, &surface_size, fe::ImageUsage::COLOR_ATTACHMENT)
-                .present_mode(surface_pm).pre_transform(fe::SurfaceTransform::Identity)
-                .composite_alpha(surface_ca).create(&f.device)?;
+
+        let swapchain = fe::SwapchainBuilder::new(&surface.object, surface.buffer_count, &surface.format,
+            &surface_size, fe::ImageUsage::COLOR_ATTACHMENT)
+                .present_mode(surface.present_mode).pre_transform(fe::SurfaceTransform::Identity)
+                .composite_alpha(surface.composite_mode).create(&f.device)?;
         // acquire_nextより前にやらないと死ぬ(get_images)
         let backbuffers = swapchain.get_images()?;
         let isr = fe::ImageSubresourceRange::color(0, 0);
-        let bb_views = backbuffers.iter().map(|i| i.create_view(None, None, &fe::ComponentMapping::default(), &isr))
-            .collect::<fe::Result<Vec<_>>>()?;
-
-        let rp = fe::RenderPassBuilder::new()
-            .add_attachment(fe::AttachmentDescription::new(surface_format.format, fe::ImageLayout::PresentSrc, fe::ImageLayout::PresentSrc)
-                .load_op(fe::LoadOp::Clear).store_op(fe::StoreOp::Store))
-            .add_subpass(fe::SubpassDescription::new().add_color_output(0, fe::ImageLayout::ColorAttachmentOpt, None))
-            .add_dependency(fe::vk::VkSubpassDependency
-            {
-                srcSubpass: fe::vk::VK_SUBPASS_EXTERNAL, dstSubpass: 0,
-                srcAccessMask: 0, dstAccessMask: fe::AccessFlags::COLOR_ATTACHMENT.write,
-                srcStageMask: fe::PipelineStageFlags::TOP_OF_PIPE.0, dstStageMask: fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT.0,
-                dependencyFlags: fe::vk::VK_DEPENDENCY_BY_REGION_BIT
-            })
-            .create(&f.device).unwrap();
-        let framebuffers = bb_views.iter().map(|iv| fe::Framebuffer::new(&rp, &[iv], &surface_size, 1))
-            .collect::<fe::Result<Vec<_>>>()?;
+        let (mut bb_views, mut framebuffers) = (Vec::with_capacity(backbuffers.len()), Vec::with_capacity(backbuffers.len()));
+        for bb in &backbuffers {
+            let view = bb.create_view(None, None, &fe::ComponentMapping::default(), &isr)?;
+            framebuffers.push(fe::Framebuffer::new(&res.rp, &[&view], &surface_size, 1)?);
+            bb_views.push(view);
+        }
 
         let fw = fe::Fence::new(&f.device, false).unwrap();
         let init_commands = f.cmdpool.alloc(1, true).unwrap();
@@ -294,82 +309,67 @@ impl App
         
         Ok(Some(WindowRenderTargets
         {
-            swapchain, backbuffers: bb_views, framebuffers, renderpass: rp, size: surface_size
+            swapchain, backbuffers: bb_views, framebuffers, size: surface_size
         }))
     }
-    fn populate_render_commands(&self) -> fe::Result<RenderCommands>
-    {
-        let f = Ref::map(self.ferrite.borrow(), |f| f.as_ref().unwrap());
-        let rtvs = Ref::map(self.rendertargets.borrow(), |r| r.as_ref().unwrap());
-        let res = Ref::map(self.res.borrow(), |r| r.as_ref().unwrap());
-        let rds = Ref::map(self.rtdres.borrow(), |r| r.as_ref().unwrap());
-
-        let render_commands = f.cmdpool.alloc(rtvs.framebuffers.len() as _, true)?;
-        for ((c, fb), iv) in render_commands.iter().zip(&rtvs.framebuffers).zip(&rtvs.backbuffers)
+}
+struct RenderResources { rp: fe::RenderPass, gp: fe::Pipeline }
+impl RenderResources {
+    fn new(dev: &fe::Device, res: &Resources, surface: &DescribedSurface) -> fe::Result<Self> {
+        let rp = fe::RenderPassBuilder::new()
+            .add_attachment(fe::AttachmentDescription::new(surface.format.format, fe::ImageLayout::PresentSrc, fe::ImageLayout::PresentSrc)
+                .load_op(fe::LoadOp::Clear).store_op(fe::StoreOp::Store))
+            .add_subpass(fe::SubpassDescription::new().add_color_output(0, fe::ImageLayout::ColorAttachmentOpt, None))
+            .add_dependency(fe::vk::VkSubpassDependency {
+                srcSubpass: fe::vk::VK_SUBPASS_EXTERNAL, dstSubpass: 0,
+                srcAccessMask: 0, dstAccessMask: fe::AccessFlags::COLOR_ATTACHMENT.write,
+                srcStageMask: fe::PipelineStageFlags::TOP_OF_PIPE.0, dstStageMask: fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT.0,
+                dependencyFlags: fe::vk::VK_DEPENDENCY_BY_REGION_BIT
+            }).create(dev)?;
+        
+        let gp;
         {
-            let subref = fe::ImageSubref::color(&iv, 0, 0);
-            c.begin()?
-                .begin_render_pass(&rtvs.renderpass, fb, fe::vk::VkRect2D
-                {
-                    offset: fe::vk::VkOffset2D { x: 0, y: 0 },
-                    extent: fe::vk::VkExtent2D { width: rtvs.size.0, height: rtvs.size.1 }
-                }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 0.5])], true)
-                    .bind_graphics_pipeline_pair(&rds.gp, &res.pl)
-                    .bind_vertex_buffers(0, &[(&res.buf, 0)]).draw(3, 1, 0, 0)
-                .end_render_pass();
+            let mut gpb = fe::GraphicsPipelineBuilder::new(&res.pl, (&rp, 0));
+            let mut vps = fe::VertexProcessingStages::new(fe::PipelineShader::new(&res.shaders.v_pass, "main", None),
+                VBIND, VATTRS, fe::vk::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            vps.fragment_shader(fe::PipelineShader::new(&res.shaders.f_phong, "main", None));
+            gp = gpb.vertex_processing(vps)
+                .fixed_viewport_scissors(fe::DynamicArrayState::Dynamic(1), fe::DynamicArrayState::Dynamic(1))
+                .add_attachment_blend(fe::AttachmentColorBlendState::noblend()).create(dev, None)?;
         }
-        Ok(RenderCommands(render_commands))
-    }
-    fn render(&self) -> fe::Result<()>
-    {
-        let fr = self.ferrite.borrow(); let f = fr.as_ref().unwrap();
-        let rtvr = self.rendertargets.borrow(); let rtvs = rtvr.as_ref().unwrap();
-        let rcmdsr = self.rcmds.borrow(); let rcmds = rcmdsr.as_ref().unwrap();
-
-        let next = rtvs.swapchain.acquire_next(None, fe::CompletionHandler::Device(&f.semaphore_sync_next))?
-            as usize;
-        f.queue.submit(&[fe::SubmissionBatch
-        {
-            command_buffers: Cow::Borrowed(&rcmds.0[next..next+1]),
-            wait_semaphores: Cow::Borrowed(&[(&f.semaphore_sync_next, fe::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)]),
-            signal_semaphores: Cow::Borrowed(&[&f.semaphore_command_completion])
-        }], Some(&f.fence_command_completion))?;
-        f.queue.present(&[(&rtvs.swapchain, next as _)], &[&f.semaphore_command_completion])?;
-        // コマンドバッファの使用が終了したことを明示する
-        f.fence_command_completion.wait()?; f.fence_command_completion.reset()?; Ok(())
+        
+        return Ok(RenderResources { rp, gp })
     }
 }
-struct WindowRenderTargets
-{
-    framebuffers: Vec<fe::Framebuffer>, renderpass: fe::RenderPass, backbuffers: Vec<fe::ImageView>,
-    swapchain: fe::Swapchain, size: fe::Extent2D
-}
-struct RenderTargetDependentResources
-{
-    gp: fe::Pipeline
-}
-impl RenderTargetDependentResources
-{
-    pub fn new(device: &fe::Device, res: &Resources, rtvs: &WindowRenderTargets) -> fe::Result<Self>
+pub struct RenderCommands(Vec<fe::CommandBuffer>);
+impl RenderCommands {
+    fn populate(f: &Ferrite, cr: &Resources, rt: &WindowRenderTargets, res: &RenderResources) -> fe::Result<Self>
     {
         let vp = fe::vk::VkViewport
         {
-            x: 0.0, y: 0.0, width: rtvs.size.0 as _, height: rtvs.size.1 as _, minDepth: 0.0, maxDepth: 1.0
+            x: 0.0, y: 0.0, width: rt.size.0 as _, height: rt.size.1 as _, minDepth: 0.0, maxDepth: 1.0
         };
         let scis = fe::vk::VkRect2D
         {
             offset: fe::vk::VkOffset2D { x: 0, y: 0 },
             extent: fe::vk::VkExtent2D { width: vp.width as _, height: vp.height as _ }
         };
-        let mut gpb = fe::GraphicsPipelineBuilder::new(&res.pl, (&rtvs.renderpass, 0));
-        let mut vps = fe::VertexProcessingStages::new(fe::PipelineShader::new(&res.shaders.v_pass, "main", None),
-            VBIND, VATTRS, fe::vk::VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-        vps.fragment_shader(fe::PipelineShader::new(&res.shaders.f_phong, "main", None));
-        let gp = gpb.vertex_processing(vps)
-            .fixed_viewport_scissors(fe::DynamicArrayState::Static(&[vp]), fe::DynamicArrayState::Static(&[scis]))
-            .add_attachment_blend(fe::AttachmentColorBlendState::noblend()).create(device, None)?;
-        
-        Ok(RenderTargetDependentResources { gp })
+
+        let render_commands = f.cmdpool.alloc(rt.framebuffers.len() as _, true)?;
+        for (c, fb) in render_commands.iter().zip(&rt.framebuffers)
+        {
+            c.begin()?
+                .begin_render_pass(&res.rp, fb, fe::vk::VkRect2D
+                {
+                    offset: fe::vk::VkOffset2D { x: 0, y: 0 },
+                    extent: fe::vk::VkExtent2D { width: rt.size.0, height: rt.size.1 }
+                }, &[fe::ClearValue::Color([0.0, 0.0, 0.0, 0.5])], true)
+                    .bind_graphics_pipeline_pair(&res.gp, &cr.pl)
+                    .set_viewport(0, &[vp.clone()]).set_scissor(0, &[scis.clone()])
+                    .bind_vertex_buffers(0, &[(&cr.buf, 0)]).draw(3, 1, 0, 0)
+                .end_render_pass();
+        }
+        return Ok(RenderCommands(render_commands));
     }
 }
 
