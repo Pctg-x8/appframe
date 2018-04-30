@@ -5,7 +5,7 @@ authors = ["S.Percentage <Syn.Tri.Naga@gmail.com>"]
 build = "build.rs"
 
 [features]
-with_ferrite = ["ferrite"]
+with_bedrock = ["bedrock"]
 with_xcb = ["xcb"]
 # マニュアルレンダリングモード: 任意のタイミングで描画を発行できるのでCPUを節約できる
 manual_rendering = []
@@ -14,7 +14,7 @@ manual_rendering = []
 univstring = "0.2"
 bitflags = "1.0"
 libc = "0.2"
-ferrite = { git = "https://github.com/Pctg-x8/ferrite", optional = true, features = ["FeImplements", "FePresentation"] }
+bedrock = { git = "https://github.com/Pctg-x8/bedrock", optional = true, features = ["Implements", "Presentation"] }
 xcb = { version = "0.8", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

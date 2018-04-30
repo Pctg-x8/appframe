@@ -1,6 +1,6 @@
 
 extern crate libc;
-#[cfg(feature = "with_ferrite")] extern crate ferrite;
+#[cfg(feature = "with_bedrock")] extern crate bedrock;
 
 #[cfg(target_os = "macos")] #[macro_use] extern crate objc;
 #[cfg(target_os = "macos")] extern crate appkit;
@@ -24,17 +24,17 @@ pub trait GUIApplicationRunner<E: EventDelegate>
     fn run(delegate: E) -> i32;
     fn event_delegate(&self) -> &E;
 }
-#[cfg(feature = "with_ferrite")]
-pub trait FerriteRenderingServer
+#[cfg(feature = "with_bedrock")]
+pub trait BedrockRenderingServer
 {
-    fn presentation_support(&self, adapter: &ferrite::PhysicalDevice, rendered_qf: u32) -> bool;
-    fn create_surface<WE: WindowEventDelegate>(&self, w: &NativeView<WE>, instance: &ferrite::Instance)
-        -> ferrite::Result<ferrite::Surface>;
+    fn presentation_support(&self, adapter: &bedrock::PhysicalDevice, rendered_qf: u32) -> bool;
+    fn create_surface<WE: WindowEventDelegate>(&self, w: &NativeView<WE>, instance: &bedrock::Instance)
+        -> bedrock::Result<bedrock::Surface>;
 }
 pub trait Window
 {
     fn show(&self);
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     fn mark_dirty(&self);
 }
 pub trait WindowBuilder<'c> : Sized
@@ -50,7 +50,7 @@ pub trait WindowBuilder<'c> : Sized
     /// Create a window
     fn create<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
         -> IOResult<NativeWindow<WE>>;
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     /// Create a Renderable window
     fn create_renderable<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
         -> IOResult<NativeWindow<WE>> where WE::ClientDelegate: 'static;
@@ -62,10 +62,10 @@ pub trait EventDelegate : Sized
     fn on_activated(&self, _server: &Rc<GUIApplication<Self>>) { }
 
     /*
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     fn on_init_view(&self, _server: &GUIApplication<Self>, _surface_onto: &NativeView<Self>) { }
 
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     fn on_render_period(&self) {}
     */
 }

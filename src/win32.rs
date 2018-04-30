@@ -2,9 +2,9 @@
 
 #![allow(unused_imports)]
 
-#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
+#[cfg(all(feature = "with_bedrock", not(feature = "manual_rendering")))]
 extern crate comdrive;
-#[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
+#[cfg(all(feature = "with_bedrock", not(feature = "manual_rendering")))]
 use self::comdrive::*;
 
 use std::io::{Result as IOResult, Error as IOError};
@@ -31,7 +31,7 @@ use winapi::um::objbase::COINIT_MULTITHREADED;
 use std::rc::*;
 use {EventDelegate, WindowEventDelegate, GUIApplicationRunner, Window, WindowBuilder};
 
-#[cfg(feature = "with_ferrite")] use ferrite as fe;
+#[cfg(feature = "with_bedrock")] use bedrock as fe;
 
 pub struct GUIApplication<E: EventDelegate>(Option<E>);
 impl<E: EventDelegate> GUIApplicationRunner<E> for GUIApplication<E>
@@ -58,8 +58,8 @@ impl<E: EventDelegate> Drop for GUIApplication<E>
         self.0 = None; unsafe { CoUninitialize(); }
     }
 }
-#[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
+#[cfg(feature = "with_bedrock")]
+impl<E: EventDelegate> ::BedrockRenderingServer for GUIApplication<E>
 {
     fn presentation_support(&self, adapter: &fe::PhysicalDevice, rendered_qf: u32) -> bool
     {
@@ -76,7 +76,7 @@ pub struct CallbackSet<WE: WindowEventDelegate> { w: Weak<WE> }
 pub struct NativeWindow<WE: WindowEventDelegate> { handle: HWND, controller: NativeWindowController<WE> }
 impl<WE: WindowEventDelegate> Window for NativeWindow<WE> {
     fn show(&self) { unsafe { ShowWindow(self.handle, SW_SHOWNORMAL); } }
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     fn mark_dirty(&self) { unsafe { InvalidateRect(self.handle, null(), false as _); } }
 }
 pub type NativeView<WE> = NativeWindow<WE>;
@@ -138,7 +138,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
         unsafe { SetWindowLongPtr(hw, GWL_USERDATA, (&*controller.callbox) as *const _ as LONG_PTR); }
         return Ok(NativeWindow { handle: hw, controller });
     }
-    #[cfg(feature = "with_ferrite")] #[allow(unused_mut)]
+    #[cfg(feature = "with_bedrock")] #[allow(unused_mut)]
     fn create_renderable<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
         -> IOResult<NativeWindow<WE>> where WE::ClientDelegate: 'static
     {
@@ -167,22 +167,22 @@ extern
 
 struct NativeWindowController<WE: WindowEventDelegate> {
     callbox: Box<CallbackSet<WE>>,
-    #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
-    autotimer: (uianimation::Timer, UpdateTimerHandlerCell)
+    #[cfg(all(feature = "with_bedrock", not(feature = "manual_rendering")))]
+    _autotimer: (uianimation::Timer, UpdateTimerHandlerCell)
 }
 impl<WE: WindowEventDelegate> NativeWindowController<WE> {
-    #[cfg(all(feature = "with_ferrite", not(feature = "manual_rendering")))]
+    #[cfg(all(feature = "with_bedrock", not(feature = "manual_rendering")))]
     pub fn new(event: &Rc<WE>) -> IOResult<Self> {
         let mut timer = uianimation::Timer::new()?;
-        let update_handler = UpdateTimerHandlerCell(UpdateTimerHandler::create(srv));
+        let update_handler = UpdateTimerHandlerCell(UpdateTimerHandler::create(event));
         timer.set_update_handler(Some(&update_handler), uianimation::IdleBehavior::Disable)?;
         timer.enable()?;
         return Ok(NativeWindowController {
             callbox: Box::new(CallbackSet { w: Rc::downgrade(event) }),
-            autotimer: (timer, update_handler)
+            _autotimer: (timer, update_handler)
         });
     }
-    #[cfg(any(not(feature = "with_ferrite"), feature = "manual_rendering"))]
+    #[cfg(any(not(feature = "with_bedrock"), feature = "manual_rendering"))]
     pub fn new(event: &Rc<WE>) -> IOResult<Self> {
         Ok(NativeWindowController { callbox: Box::new(CallbackSet { w: Rc::downgrade(event) }) })
     }
@@ -193,7 +193,7 @@ impl<WE: WindowEventDelegate> NativeWindowController<WE> {
     extern "system" fn wndproc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) -> LRESULT {
         match msg {
             WM_DESTROY => unsafe { PostQuitMessage(0); return 0; },
-            #[cfg(all(feature = "with_ferrite", feature = "manual_rendering"))]
+            #[cfg(all(feature = "with_bedrock", feature = "manual_rendering"))]
             WM_PAINT => {
                 if let Some(cb) = unsafe { Self::extract_callset_ref(hwnd).w.upgrade() } {
                     unsafe {
@@ -214,24 +214,24 @@ impl<WE: WindowEventDelegate> NativeWindowController<WE> {
     }
 }
 
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::shared::winerror::*;
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::ctypes::c_void;
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::shared::guiddef::REFIID;
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::um::unknwnbase::IUnknown;
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 use winapi::Interface;
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
-#[repr(C)] pub struct UpdateTimerHandler<E: EventDelegate>
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
+#[repr(C)] pub struct UpdateTimerHandler<WE: WindowEventDelegate>
 {
     vtbl: *const uianimation::IUIAnimationTimerUpdateHandlerVtbl, refcount: ULONG,
-    client_handler: Option<TimerClientEventHandler>, callback: Rc<GUIApplication<E>>
+    client_handler: Option<TimerClientEventHandler>, callback: Weak<WE>
 }
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
-impl<E: EventDelegate> UpdateTimerHandler<E>
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
+impl<WE: WindowEventDelegate> UpdateTimerHandler<WE>
 {
     const UPDATE_TIMER_HANDLER_VTBL: &'static uianimation::IUIAnimationTimerUpdateHandlerVtbl =
         &uianimation::IUIAnimationTimerUpdateHandlerVtbl
@@ -242,11 +242,11 @@ impl<E: EventDelegate> UpdateTimerHandler<E>
             ClearTimerClientEventHandler: Self::clear_timer_client_event_handler
         };
     
-    pub fn create(callback: &Rc<GUIApplication<E>>) -> *mut uianimation::IUIAnimationTimerUpdateHandler
+    pub fn create(callback: &Rc<WE>) -> *mut uianimation::IUIAnimationTimerUpdateHandler
     {
         Box::into_raw(Box::new(UpdateTimerHandler
         {
-            vtbl: Self::UPDATE_TIMER_HANDLER_VTBL, refcount: 1, client_handler: None, callback: callback.clone()
+            vtbl: Self::UPDATE_TIMER_HANDLER_VTBL, refcount: 1, client_handler: None, callback: Rc::downgrade(callback)
         })) as _
     }
     unsafe fn refptr<'a>(ptr: *const uianimation::IUIAnimationTimerUpdateHandler) -> &'a Self { &*(ptr as *const Self) }
@@ -280,9 +280,9 @@ impl<E: EventDelegate> UpdateTimerHandler<E>
     }
 
     extern "system" fn on_update(this: *mut uianimation::IUIAnimationTimerUpdateHandler,
-        time: uianimation::Seconds, result: *mut uianimation::UpdateResult) -> HRESULT
+        _time: uianimation::Seconds, result: *mut uianimation::UpdateResult) -> HRESULT
     {
-        if let Some(e) = unsafe { Self::refptr(this).callback.upgrade() } { e.on_render_period(); }
+        if let Some(e) = unsafe { Self::refptr(this).callback.upgrade() } { e.render(); }
         // println!("Update: {}", time);
         unsafe { *result = uianimation::UpdateResult::NoChange; }
         S_OK
@@ -303,18 +303,18 @@ impl<E: EventDelegate> UpdateTimerHandler<E>
         unsafe { Self::refmut(this).client_handler = None; S_OK }
     }
 }
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 pub struct UpdateTimerHandlerCell(*mut uianimation::IUIAnimationTimerUpdateHandler);
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 impl Drop for UpdateTimerHandlerCell { fn drop(&mut self) { unsafe { (*self.0).Release(); } } }
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
-impl AsRawHandle<uianimation::IUIAnimationTimerUpdateHandler> for UpdateTimerHandlerCell
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
+unsafe impl AsRawHandle<uianimation::IUIAnimationTimerUpdateHandler> for UpdateTimerHandlerCell
 {
     fn as_raw_handle(&self) -> *mut uianimation::IUIAnimationTimerUpdateHandler { self.0 }
 }
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 pub struct TimerClientEventHandler(*mut uianimation::IUIAnimationTimerClientEventHandler);
-#[cfg(feature = "with_ferrite")] #[cfg(not(feature = "manual_rendering"))]
+#[cfg(feature = "with_bedrock")] #[cfg(not(feature = "manual_rendering"))]
 impl Drop for TimerClientEventHandler { fn drop(&mut self) { unsafe { (*self.0).Release(); } } }
 
 // use std::str::Utf8Error;
