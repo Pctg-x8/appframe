@@ -7,11 +7,11 @@ use std::rc::*;
 use {GUIApplicationRunner, WindowEventDelegate, EventDelegate, Window, WindowBuilder};
 use std::marker::PhantomData;
 use std::io::{Result as IOResult, Error as IOError, ErrorKind};
-#[cfg_attr(not(feature = "with_ferrite"), allow(unused_imports))]
+#[cfg_attr(not(feature = "with_bedrock"), allow(unused_imports))]
 use std::ops::{Deref, DerefMut};
 use std::mem::transmute;
 
-#[cfg(feature = "with_ferrite")] use ferrite as fe;
+#[cfg(feature = "with_bedrock")] use bedrock as br;
 
 /*
 #[link(name = "Foundation", kind = "framework")] extern "system"
@@ -174,14 +174,14 @@ impl<E: EventDelegate + 'static> GUIApplicationRunner<E> for GUIApplication<E>
     }
     fn event_delegate(&self) -> &E { &self.0 }
 }
-#[cfg(feature = "with_ferrite")]
-impl<E: EventDelegate> ::FerriteRenderingServer for GUIApplication<E>
+#[cfg(feature = "with_bedrock")]
+impl<E: EventDelegate> ::BedrockRenderingServer for GUIApplication<E>
 {
-    fn presentation_support(&self, _adapter: &fe::PhysicalDevice, _queue_family_index: u32) -> bool { true }
-    fn create_surface<WE: WindowEventDelegate>(&self, w: &FeRenderableView<WE>, instance: &fe::Instance)
-        -> fe::Result<fe::Surface>
+    fn presentation_support(&self, _adapter: &br::PhysicalDevice, _queue_family_index: u32) -> bool { true }
+    fn create_surface<WE: WindowEventDelegate>(&self, w: &FeRenderableView<WE>, instance: &br::Instance)
+        -> br::Result<br::Surface>
     {
-        fe::Surface::new_macos(instance, w as *const _ as _)
+        br::Surface::new_macos(instance, w as *const _ as _)
     }
 }
 
@@ -189,7 +189,7 @@ pub struct NativeWindow<WE: WindowEventDelegate>(CocoaObject<NSWindow>, CocoaObj
 impl<WE: WindowEventDelegate> Window for NativeWindow<WE>
 {
     fn show(&self) { self.0.make_key_and_order_front(NSApplication::shared().unwrap().objid()); }
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     fn mark_dirty(&self) {
         let _: () = unsafe { msg_send![transmute::<_, &Object>(self.1.view()), setNeedsDisplay: YES] };
     }
@@ -233,7 +233,7 @@ impl<'c> WindowBuilder<'c> for NativeWindowBuilder<'c>
             }).map_err(|_| IOError::new(ErrorKind::Other, "System I/O Error on creating NSWindow"))
         }
     }
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     fn create_renderable<WE: WindowEventDelegate>(&self, server: &Rc<GUIApplication<WE::ClientDelegate>>, event: &Rc<WE>)
         -> IOResult<NativeWindow<WE>> where WE::ClientDelegate: 'static
     {
@@ -248,20 +248,19 @@ impl<'c> NativeWindowBuilder<'c>
     }
 }
 
-#[cfg(feature = "with_ferrite")]
 pub struct FeRenderableView<WE: WindowEventDelegate>(Object, PhantomData<(Weak<GUIApplication<WE::ClientDelegate>>, Weak<WE>)>);
-#[cfg(feature = "with_ferrite")] impl<WE: WindowEventDelegate> Deref for FeRenderableView<WE> {
+impl<WE: WindowEventDelegate> Deref for FeRenderableView<WE> {
     type Target = NSView;
     fn deref(&self) -> &NSView { unsafe { transmute(self) } }
 }
-#[cfg(feature = "with_ferrite")] impl<WE: WindowEventDelegate> DerefMut for FeRenderableView<WE> {
+impl<WE: WindowEventDelegate> DerefMut for FeRenderableView<WE> {
     fn deref_mut(&mut self) -> &mut NSView { unsafe { transmute(self) } }
 }
-#[cfg(feature = "with_ferrite")] impl<WE: WindowEventDelegate> ObjcObjectBase for FeRenderableView<WE> {
+impl<WE: WindowEventDelegate> ObjcObjectBase for FeRenderableView<WE> {
     fn objid(&self) -> &Object { &self.0 }
     fn objid_mut(&mut self) -> &mut Object { &mut self.0 }
 }
-#[cfg(feature = "with_ferrite")] impl<WE: WindowEventDelegate> FeRenderableView<WE> {
+impl<WE: WindowEventDelegate> FeRenderableView<WE> {
     fn class() -> &'static Class {
         extern fn yesman(_this: &Object, _sel: Sel) -> BOOL { YES }
         extern fn make_backing_layer(this: &Object, _sel: Sel) -> objc_id {
@@ -343,9 +342,9 @@ pub struct FeRenderableView<WE: WindowEventDelegate>(Object, PhantomData<(Weak<G
         }
     }
 }
-#[cfg(feature = "with_ferrite")] pub type NativeView<E> = FeRenderableView<E>;
-#[cfg(not(feature = "with_ferrite"))] pub type NativeView<E> = (NSView, PhantomData<E>);
-#[cfg(feature = "with_ferrite")] #[cfg(feature = "manual_rendering")]
+#[cfg(feature = "with_bedrock")] pub type NativeView<E> = FeRenderableView<E>;
+#[cfg(not(feature = "with_bedrock"))] pub type NativeView<E> = (NSView, PhantomData<E>);
+#[cfg(feature = "manual_rendering")]
 pub struct FeRenderableViewCtrlIvarShadowings<WE: WindowEventDelegate>
 {
     _ev: Weak<WE>, _server: Weak<GUIApplication<WE::ClientDelegate>>,

@@ -2,7 +2,7 @@
 #[cfg(target_os = "macos")]
 fn main()
 {
-    #[cfg(feature = "with_ferrite")]
+    #[cfg(feature = "with_bedrock")]
     {
         println!("cargo:rustc-link-search=framework={}/MoltenVK/macOS", env!("VK_SDK_PATH"));
         println!("cargo:rustc-link-search=framework={}/macOS/Frameworks", env!("VK_SDK_PATH"));
