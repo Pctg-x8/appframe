@@ -37,6 +37,12 @@ pub trait Window
     #[cfg(feature = "with_bedrock")]
     fn mark_dirty(&self);
 }
+pub trait View
+{
+    fn size(&self) -> (usize, usize);
+    fn width(&self) -> usize { self.size().0 }
+    fn height(&self) -> usize { self.size().1 }
+}
 pub trait WindowBuilder<'c> : Sized
 {
     fn new(width: u16, height: u16, caption: &'c str) -> Self;

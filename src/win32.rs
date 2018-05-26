@@ -29,7 +29,7 @@ use winapi::um::libloaderapi::GetModuleHandleA as GetModuleHandle;
 use winapi::um::combaseapi::{CoInitializeEx, CoUninitialize};
 use winapi::um::objbase::COINIT_MULTITHREADED;
 use std::rc::*;
-use {EventDelegate, WindowEventDelegate, GUIApplicationRunner, Window, WindowBuilder};
+use {EventDelegate, WindowEventDelegate, GUIApplicationRunner, Window, View, WindowBuilder};
 
 #[cfg(feature = "with_bedrock")] use bedrock as fe;
 
@@ -80,6 +80,15 @@ impl<WE: WindowEventDelegate> Window for NativeWindow<WE> {
     fn mark_dirty(&self) { unsafe { InvalidateRect(self.handle, null(), false as _); } }
 }
 pub type NativeView<WE> = NativeWindow<WE>;
+impl<WE: WindowEventDelegate> View for NativeView<WE>
+{
+    fn size(&self) -> (usize, usize)
+    {
+        let mut r = unsafe { uninitialized() };
+        unsafe { GetClientRect(self.handle, &mut r); }
+        return ((r.right - r.left) as _, (r.bottom - r.top) as _);
+    }
+}
 
 pub struct NativeWindowBuilder<'c>
 {
