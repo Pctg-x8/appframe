@@ -39,9 +39,9 @@ pub trait Window
 }
 pub trait View
 {
-    fn size(&self) -> (usize, usize);
-    fn width(&self) -> usize { self.size().0 }
-    fn height(&self) -> usize { self.size().1 }
+    fn size(&self) -> (u16, u16);
+    fn width(&self) -> u16 { self.size().0 }
+    fn height(&self) -> u16 { self.size().1 }
 }
 pub trait WindowBuilder<'c> : Sized
 {

@@ -82,7 +82,7 @@ impl<WE: WindowEventDelegate> Window for NativeWindow<WE> {
 pub type NativeView<WE> = NativeWindow<WE>;
 impl<WE: WindowEventDelegate> View for NativeView<WE>
 {
-    fn size(&self) -> (usize, usize)
+    fn size(&self) -> (u16, u16)
     {
         let mut r = unsafe { uninitialized() };
         unsafe { GetClientRect(self.handle, &mut r); }
